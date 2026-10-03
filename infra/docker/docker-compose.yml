@@ -1,0 +1,131 @@
+services:
+  # 1. PostgreSQL 16 (Relational Store with Row Level Security & PGCrypto)
+  postgres:
+    image: postgres:16-alpine
+    container_name: mediqr-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-mediqr_db}
+      POSTGRES_USER: ${DB_USER:-mediqr_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-mediqr_secure_dev_password_do_not_use_in_prod}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init-extensions.sql:/docker-entrypoint-initdb.d/init-extensions.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-mediqr_user} -d ${DB_NAME:-mediqr_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 2. Redis 7 (Cache, OTP & BullMQ Job Queues)
+  redis:
+    image: redis:7-alpine
+    container_name: mediqr-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-mediqr_redis_dev_password}"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-mediqr_redis_dev_password}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 3. MinIO (S3-Compatible Object Storage for Encrypted Document Vault)
+  minio:
+    image: minio/minio:latest
+    container_name: mediqr-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY:-mediqr_minio_admin}
+      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_KEY:-mediqr_minio_dev_secret_key_change_me}
+    ports:
+      - "${STORAGE_PORT:-9000}:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO Bucket Auto-Provisioner
+  minio-init:
+    image: minio/mc:latest
+    container_name: mediqr-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set local http://minio:9000 ${STORAGE_ACCESS_KEY:-mediqr_minio_admin} ${STORAGE_SECRET_KEY:-mediqr_minio_dev_secret_key_change_me};
+      /usr/bin/mc mb --ignore-existing local/${STORAGE_BUCKET_DOCUMENTS:-mediqr-documents};
+      exit 0;
+      "
+
+  # 4. ClamAV (Antivirus Daemon for Document Upload Sanitization)
+  clamav:
+    image: clamav/clamav:latest
+    container_name: mediqr-clamav
+    restart: unless-stopped
+    ports:
+      - "${CLAMAV_PORT:-3310}:3310"
+    volumes:
+      - clamav_data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD-SHELL", "echo PING | nc -w 3 localhost 3310 || exit 0"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+
+  # 5. Keycloak 24 (Self-Hosted OIDC & Patient/Clinician Identity Provider)
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: mediqr-keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-mediqr_keycloak_admin_password}
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep 'HTTP/1.1 200 OK' || exit 0"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # 6. Mailpit (Mock SMTP Server & Webmail Inspector)
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: mediqr-mailpit
+    restart: unless-stopped
+    ports:
+      - "${SMTP_PORT:-1025}:1025"
+      - "8025:8025"
+
+  # 7. OpenTelemetry Collector (Trace, Metric & Audit Ingestion)
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: mediqr-otel
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  clamav_data:

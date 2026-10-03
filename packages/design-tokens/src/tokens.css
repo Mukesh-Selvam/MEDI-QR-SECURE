@@ -1,0 +1,93 @@
+:root {
+  /* Base HSL values mapped to Plum & Blush palette */
+  --background: 24 60% 97%; /* #FDF8F6 - Subtle warm pearl */
+  --foreground: 280 17% 16%; /* #2B2230 - Deep Ink */
+
+  --card: 0 0% 100%; /* Pure crisp card surface */
+  --card-foreground: 280 17% 16%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 280 17% 16%;
+
+  --primary: 314 44% 20%; /* #4A1D3F - Deep Plum */
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 10 74% 95%; /* #FBEAE6 - Blush surface */
+  --secondary-foreground: 314 44% 20%;
+
+  --muted: 24 20% 92%;
+  --muted-foreground: 280 8% 46%;
+
+  --accent: 11 75% 63%; /* #E8735A - Coral accent */
+  --accent-foreground: 0 0% 100%;
+
+  --destructive: 0 74% 42%;
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 24 18% 88%;
+  --input: 24 18% 88%;
+  --ring: 314 44% 20%;
+
+  --radius: 0.75rem;
+
+  /* Signature motifs */
+  --dot-grid-color: rgba(74, 29, 63, 0.07);
+  --tactile-card-tilt: perspective(1000px) rotateX(1.5deg) rotateY(-2deg);
+}
+
+.dark {
+  --background: 280 25% 9%; /* #17111A - Ink dark mode */
+  --foreground: 24 30% 94%;
+
+  --card: 280 22% 13%; /* #231B27 */
+  --card-foreground: 24 30% 94%;
+
+  --popover: 280 22% 13%;
+  --popover-foreground: 24 30% 94%;
+
+  --primary: 314 40% 55%; /* Lightened Plum for contrast */
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 280 20% 18%;
+  --secondary-foreground: 24 30% 94%;
+
+  --muted: 280 15% 20%;
+  --muted-foreground: 280 10% 65%;
+
+  --accent: 11 75% 63%; /* Coral accent */
+  --accent-foreground: 0 0% 100%;
+
+  --destructive: 0 65% 50%;
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 280 18% 22%;
+  --input: 280 18% 22%;
+  --ring: 11 75% 63%;
+
+  --dot-grid-color: rgba(232, 115, 90, 0.08);
+}
+
+/* Dot grid motif utility */
+.bg-dot-grid {
+  background-image: radial-gradient(
+    var(--dot-grid-color) 1.25px,
+    transparent 1.25px
+  );
+  background-size: 20px 20px;
+}
+
+/* Tactile Health ID Card 3D Sheen & Hover */
+.health-id-card-hero {
+  transition:
+    transform 300ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform: var(--tactile-card-tilt);
+  will-change: transform, box-shadow;
+}
+
+.health-id-card-hero:hover {
+  transform: perspective(1000px) rotateX(0deg) rotateY(0deg) translateY(-4px);
+  box-shadow:
+    0 20px 50px -10px rgba(74, 29, 63, 0.22),
+    0 8px 16px -4px rgba(74, 29, 63, 0.12);
+}

@@ -1,0 +1,23 @@
+# MediQR Secure — STRIDE Threat Model & Security Controls
+
+## 1. STRIDE Analysis Matrix
+
+| Threat Category            | Potential Attack Vector in MediQR                                                             | Engineering Countermeasure / Control                                                                                                                                                                              | ASVS L2 Ref  |
+| -------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| **Spoofing**               | Attacker impersonates verified clinician to access maternal records                           | Keycloak OIDC with mandatory TOTP/WebAuthn MFA; verification status checked in central policy before authorization.                                                                                               | V2.1, V2.8   |
+| **Spoofing**               | Attacker counterfeits patient QR card                                                         | Physical QR card encodes only an opaque 128-bit random token hash routing to an access-request initiation endpoint; requires patient/guardian OTP authorization. In-app QR rotates every 60s with HMAC signature. | V3.2, V9.1   |
+| **Tampering**              | Rogue actor alters audit events to conceal unauthorized data viewing                          | Audit events write `prev_hash` + `hash` in an append-only PostgreSQL table with restricted write-only database roles; scheduled integrity verification jobs check chain integrity.                                | V8.1, V8.2   |
+| **Tampering**              | Malicious file upload containing malware or forged clinical record                            | ClamAV antivirus scan pipeline executed before document becomes visible; SHA-256 integrity checksum verified; documents marked verified-source vs patient-uploaded.                                               | V12.1, V12.4 |
+| **Repudiation**            | Clinician denies having viewed sensitive pediatric record                                     | Central policy layer enforces synchronous transactional audit event generation for every document view; logs capture authenticated user ID, council registration number, purpose, timestamp, and IP hash.         | V8.3         |
+| **Information Disclosure** | PHI leak via URL query strings, browser history, or reverse proxy logs                        | Strict prohibition of PHI in URLs; presigned URLs use random object keys and expire in 5 minutes; short-lived envelope encryption keys.                                                                           | V4.1, V9.2   |
+| **Denial of Service**      | Flooding QR resolution endpoint or OTP request endpoints                                      | Rate limiting on QR resolution, OTP request, and auth endpoints backed by Redis sliding window counters.                                                                                                          | V11.1        |
+| **Elevation of Privilege** | Facility staff uses emergency break-glass to bypass normal consent for non-emergency browsing | Emergency grants strictly limited to emergency summary (allergies, blood group, active prescriptions); automatic alert sent to patient & guardian; mandatory admin review within 24 hours.                        | V4.2, V4.3   |
+
+---
+
+## 2. Cryptographic Controls Baseline
+
+1. **Transport**: TLS 1.3 only with secure cipher suites (`TLS_AES_256_GCM_SHA384`, `TLS_CHACHA20_POLY1305_SHA256`).
+2. **At Rest**: AES-256-GCM envelope encryption with KMS-managed Key Encryption Keys ($KEK$).
+3. **Data Identifiers**: Field-level encryption for direct patient identifiers.
+4. **Secrets Management**: Zero plain text secrets in repo, docker files, or environment templates.

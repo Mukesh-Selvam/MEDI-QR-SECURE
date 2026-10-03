@@ -1,0 +1,46 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Build outputs
+dist
+build
+.next
+out
+.turbo
+
+# Environment variables (strict zero-leak)
+.env
+.env.local
+.env.production
+.env.development
+!.env.example
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea
+
+# Logs & telemetry artifacts
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+coverage
+.nyc_output
+
+# Local storage data (MinIO, Postgres, Redis volumes)
+.data/
+minio-data/
+postgres-data/
+redis-data/
+clamav-data/
+
+# Serwist / Next PWA output
+public/sw.js
+public/sw.js.map
+public/workbox-*.js
+public/workbox-*.js.map

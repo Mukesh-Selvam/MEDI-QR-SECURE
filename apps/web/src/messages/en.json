@@ -1,0 +1,23 @@
+{
+  "common": {
+    "appName": "MediQR Secure",
+    "tagline": "India-First Digital Health-Record Access Platform",
+    "assistiveNotice": "Assistive, strictly non-diagnostic. Displays documented records only.",
+    "scanQr": "Scan Health QR",
+    "requestAccess": "Request Access",
+    "emergencyBreakGlass": "Emergency Break-Glass"
+  },
+  "nav": {
+    "patientPortal": "Patient Vault",
+    "clinicianConsole": "Clinician Console",
+    "facilityPortal": "Facilities & Pharmacies",
+    "complianceConsole": "Audit & Compliance",
+    "trustCenter": "Trust & Security"
+  },
+  "hero": {
+    "headline": "Sovereign Health ID for Maternal & Child Care",
+    "subheadline": "Every patient gets one QR-linked Health ID with opaque, revocable tokens. Authorized clinicians request access; patients consent; every view is recorded in a tamper-evident audit trail.",
+    "ctaPatient": "Open Patient Vault",
+    "ctaClinician": "Clinician Login"
+  }
+}
