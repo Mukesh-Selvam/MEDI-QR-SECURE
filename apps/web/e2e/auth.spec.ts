@@ -435,6 +435,17 @@ test.describe("browser authentication", () => {
       `/api/v1/vault/${uploadedDocumentId}/stream`
     );
     expect(readAfterRevocation.status()).toBe(403);
+    const historyText = await patientPage
+      .locator('section[aria-labelledby="history-heading"]')
+      .innerText();
+    expect(historyText).toContain("requested access");
+    expect(historyText).toContain("approved access");
+    expect(historyText).toContain("viewed a laboratory record");
+    expect(historyText).toContain("ended access");
+    expect(historyText).not.toMatch(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+    );
+    expect(historyText).not.toContain("fake-lab.pdf");
     await clinicianContext.close();
     await patientContext.close();
   });

@@ -7,6 +7,7 @@ import {
   accessRequests,
   clinicians,
   consents,
+  documents,
   guardianships,
   notifications,
   patients,
@@ -15,6 +16,7 @@ import {
 } from "../../database/schema.js";
 import type { AuthenticatedUser } from "../auth/decorators/current-user.decorator.js";
 import { AuditService } from "../audit/audit.service.js";
+import { ConsentService } from "../consent/consent.service.js";
 import { NoopNotificationEmailProvider } from "../notifications/mailpit-notification-email.provider.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
 import { AccessRequestApprovalService } from "./access-request-approval.service.js";
@@ -213,6 +215,7 @@ describe("Access request approval flow (integration)", () => {
     await db
       .delete(notifications)
       .where(inArray(notifications.requestId, [requestId, otherRequestId]));
+    await db.delete(documents).where(eq(documents.patientId, patientId));
     await db.delete(accessRequests).where(inArray(accessRequests.patientId, patientIds));
     await db.delete(consents).where(inArray(consents.patientId, patientIds));
     await db.delete(qrCredentials).where(inArray(qrCredentials.patientId, patientIds));
@@ -569,6 +572,62 @@ describe("Access request approval flow (integration)", () => {
       .where(eq(accessRequests.id, otpRequest.id));
     await db.delete(accessRequests).where(eq(accessRequests.id, otpRequest.id));
     await db.delete(accessRequests).where(eq(accessRequests.id, anotherRequest.id));
+  });
+
+  it("returns one chronological history thread for the request, approval, read, and revocation", async () => {
+    const patientUser: AuthenticatedUser = {
+      id: patientUserId,
+      sub: `approval-patient-${suffix}`,
+      role: "patient",
+    };
+    const [consent] = await db
+      .select()
+      .from(consents)
+      .where(eq(consents.accessRequestId, requestId));
+    const [document] = await db
+      .insert(documents)
+      .values({
+        patientId,
+        uploaderId: clinicianUserId,
+        uploadSource: "facility-verified",
+        documentType: "scan",
+        storageKey: `history-${randomUUID()}`,
+        storageBucket: "live-documents",
+        mimeType: "application/pdf",
+        fileSizeBytes: 1,
+        status: "ready",
+      })
+      .returning({ id: documents.id });
+
+    await audit.log({
+      actorId: clinicianUserId,
+      actorRole: "clinician",
+      action: "DOCUMENT_VIEWED",
+      resourceType: "document",
+      resourceId: document.id,
+      outcome: "SUCCESS",
+      ipHash: audit.hashIp("127.0.0.1"),
+    });
+    await new ConsentService(
+      audit,
+      new NotificationsService(new NoopNotificationEmailProvider())
+    ).revoke(consent.id, patientUser, audit.hashIp("127.0.0.1"));
+
+    const history = await service.listHistory(patientUser);
+    const thread = history.threads.find(({ id }) => id === requestId);
+    expect(thread).toBeDefined();
+    expect(thread?.events.map(({ kind }) => kind)).toEqual([
+      "requested",
+      "approved",
+      "read",
+      "revoked",
+    ]);
+    expect(thread?.events[2]).toMatchObject({
+      kind: "read",
+      documentType: "scan",
+    });
+    expect(thread?.consentStatus).toBe("revoked");
+    expect(JSON.stringify(thread)).not.toMatch(/ipHash|filename|documentName/i);
   });
 
   it("expires OTPs, locks after five wrong codes, and rate-limits issuance", async () => {

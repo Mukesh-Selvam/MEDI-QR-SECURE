@@ -7,7 +7,17 @@ import {
   Injectable,
 } from "@nestjs/common";
 import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
-import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Redis } from "ioredis";
 import { z } from "zod";
@@ -131,13 +141,14 @@ export class AccessRequestApprovalService {
     } else {
       throw new ForbiddenException("Patient or guardian session is required");
     }
-    if (patientIds.length === 0) return { requests: [], reads: [] };
+    if (patientIds.length === 0) return { threads: [] };
 
     const requests = await db
       .select({
         id: accessRequests.id,
         patientId: accessRequests.patientId,
         patientLabel: patients.fullName,
+        clinicianUserId: accessRequests.clinicianUserId,
         clinicianName: clinicians.fullName,
         purpose: accessRequests.purpose,
         scope: accessRequests.scope,
@@ -145,8 +156,10 @@ export class AccessRequestApprovalService {
         requestedAt: accessRequests.createdAt,
         consentId: consents.id,
         consentStatus: consents.status,
+        consentCreatedAt: consents.createdAt,
         consentExpiresAt: consents.expiresAt,
         consentRevokedAt: consents.revokedAt,
+        decidedAt: accessRequests.decidedAt,
       })
       .from(accessRequests)
       .innerJoin(patients, eq(accessRequests.patientId, patients.id))
@@ -158,9 +171,9 @@ export class AccessRequestApprovalService {
       .where(inArray(accessRequests.patientId, patientIds))
       .orderBy(desc(accessRequests.createdAt));
     const reads = await db
-      .select({
-        id: auditEvents.id,
-        clinicianName: clinicians.fullName,
+      .selectDistinctOn([auditEvents.id], {
+        requestId: accessRequests.id,
+        patientId: documents.patientId,
         documentType: documents.documentType,
         viewedAt: auditEvents.timestamp,
       })
@@ -170,6 +183,23 @@ export class AccessRequestApprovalService {
         sql`${auditEvents.resourceId} = ${documents.id}::text`
       )
       .innerJoin(clinicians, eq(auditEvents.actorId, clinicians.userId))
+      .innerJoin(
+        consents,
+        and(
+          eq(consents.patientId, documents.patientId),
+          eq(consents.granteeUserId, auditEvents.actorId),
+          lte(consents.createdAt, auditEvents.timestamp),
+          gt(consents.expiresAt, auditEvents.timestamp),
+          or(
+            isNull(consents.revokedAt),
+            gt(consents.revokedAt, auditEvents.timestamp)
+          )
+        )
+      )
+      .innerJoin(
+        accessRequests,
+        eq(consents.accessRequestId, accessRequests.id)
+      )
       .where(
         and(
           eq(auditEvents.action, "DOCUMENT_VIEWED"),
@@ -177,8 +207,63 @@ export class AccessRequestApprovalService {
           inArray(documents.patientId, patientIds)
         )
       )
-      .orderBy(desc(auditEvents.timestamp));
-    return { requests, reads };
+      .orderBy(auditEvents.id, desc(consents.createdAt));
+
+    const now = new Date();
+    const threads = requests.map((request) => {
+      const events: {
+        kind: "requested" | "approved" | "denied" | "read" | "revoked" | "expired";
+        occurredAt: Date;
+        documentType?: string;
+      }[] = [{ kind: "requested", occurredAt: request.requestedAt }];
+
+      if (request.requestStatus === "approved" && request.consentCreatedAt) {
+        events.push({ kind: "approved", occurredAt: request.consentCreatedAt });
+      } else if (request.requestStatus === "denied" && request.decidedAt) {
+        events.push({ kind: "denied", occurredAt: request.decidedAt });
+      }
+
+      for (const read of reads) {
+        if (read.requestId === request.id) {
+          events.push({
+            kind: "read",
+            occurredAt: read.viewedAt,
+            documentType: read.documentType,
+          });
+        }
+      }
+
+      if (request.consentStatus === "revoked" && request.consentRevokedAt) {
+        events.push({ kind: "revoked", occurredAt: request.consentRevokedAt });
+      } else if (
+        request.consentStatus === "active" &&
+        request.consentExpiresAt &&
+        request.consentExpiresAt <= now
+      ) {
+        events.push({ kind: "expired", occurredAt: request.consentExpiresAt });
+      }
+
+      events.sort((left, right) => left.occurredAt.getTime() - right.occurredAt.getTime());
+      return {
+        id: request.id,
+        patientId: request.patientId,
+        patientLabel: request.patientLabel,
+        clinicianName: request.clinicianName,
+        purpose: request.purpose,
+        scope: request.scope,
+        requestStatus: request.requestStatus,
+        consentId: request.consentId,
+        consentStatus:
+          request.consentStatus === "active" &&
+          request.consentExpiresAt !== null &&
+          request.consentExpiresAt <= now
+            ? "expired"
+            : request.consentStatus,
+        consentExpiresAt: request.consentExpiresAt,
+        events,
+      };
+    });
+    return { threads };
   }
 
   async approve(

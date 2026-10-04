@@ -12,6 +12,13 @@ const scopeLabels: Record<string, string> = {
   "document:vaccination": "Vaccinations",
   "document:discharge": "Discharge summaries",
 };
+const documentTypeLabels: Record<string, string> = {
+  scan: "scan",
+  lab: "laboratory",
+  prescription: "prescription",
+  vaccination: "vaccination",
+  discharge: "discharge summary",
+};
 
 const wardSchema = z.object({ id: z.string().uuid(), label: z.string() });
 const requestSchema = z.object({
@@ -29,7 +36,7 @@ const inboxSchema = z.object({
   consentDurationHours: z.number().int().positive(),
 });
 const historySchema = z.object({
-  requests: z.array(
+  threads: z.array(
     z.object({
       id: z.string().uuid(),
       patientId: z.string().uuid(),
@@ -38,19 +45,23 @@ const historySchema = z.object({
       purpose: z.string(),
       scope: z.array(z.string()),
       requestStatus: z.string(),
-      requestedAt: z.string(),
       consentId: z.string().uuid().nullable(),
       consentStatus: z.string().nullable(),
       consentExpiresAt: z.string().nullable(),
-      consentRevokedAt: z.string().nullable(),
-    })
-  ),
-  reads: z.array(
-    z.object({
-      id: z.string().uuid(),
-      clinicianName: z.string(),
-      documentType: z.string(),
-      viewedAt: z.string(),
+      events: z.array(
+        z.object({
+          kind: z.enum([
+            "requested",
+            "approved",
+            "denied",
+            "read",
+            "revoked",
+            "expired",
+          ]),
+          occurredAt: z.string(),
+          documentType: z.string().optional(),
+        })
+      ),
     })
   ),
 });
@@ -61,7 +72,7 @@ type IssuedOtp = { requestId: string; code: string; expiresAt: string };
 
 export default function PatientAccessPage() {
   const [inbox, setInbox] = useState<Inbox | null>(null);
-  const [history, setHistory] = useState<History>({ requests: [], reads: [] });
+  const [history, setHistory] = useState<History>({ threads: [] });
   const [selectedWardId, setSelectedWardId] = useState("");
   const [selectedRequestId, setSelectedRequestId] = useState("");
   const [issuedOtp, setIssuedOtp] = useState<IssuedOtp | null>(null);
@@ -127,6 +138,11 @@ export default function PatientAccessPage() {
         ({ patientId }) => patientId === selectedWardId
       ),
     [inbox?.requests, selectedWardId]
+  );
+  const visibleThreads = useMemo(
+    () =>
+      history.threads.filter(({ patientId }) => patientId === selectedWardId),
+    [history.threads, selectedWardId]
   );
   const selectedRequest = visibleRequests.find(
     ({ id }) => id === selectedRequestId
@@ -404,66 +420,93 @@ export default function PatientAccessPage() {
         </section>
 
         <section aria-labelledby="history-heading">
-          <h2 id="history-heading" className="font-serif text-2xl font-semibold">Access history</h2>
-          {history.requests.length === 0 && history.reads.length === 0 ? (
+          <h2 id="history-heading" className="font-serif text-2xl font-semibold">
+            Access history
+          </h2>
+          {visibleThreads.length === 0 ? (
             <p className="mt-3 rounded-xl border border-[#EEDBCE] bg-white p-5 text-sm dark:border-[#493A4A] dark:bg-[#322936]">
-              Approved and denied requests will appear here.
+              Requests, decisions, and record views will appear here.
             </p>
           ) : (
-            <div className="mt-3 space-y-6">
-              {history.requests.length > 0 && (
-                <ol className="space-y-3">
-                  {history.requests.map((item) => (
-                <li key={item.id} className="rounded-xl border border-[#EEDBCE] bg-white p-4 dark:border-[#493A4A] dark:bg-[#322936]">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <ol className="mt-4 space-y-5">
+              {visibleThreads.map((thread) => (
+                <li
+                  key={thread.id}
+                  className="rounded-2xl border border-[#EEDBCE] bg-white p-5 dark:border-[#493A4A] dark:bg-[#322936] sm:p-6"
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                      <p className="font-semibold">{item.clinicianName}</p>
                       {inbox?.wards.length && inbox.wards.length > 1 && (
-                        <p className="mt-1 text-xs text-[#554653] dark:text-[#D4C6D2]">{item.patientLabel}</p>
+                        <p className="text-sm font-semibold text-[#554653] dark:text-[#D4C6D2]">
+                          {thread.patientLabel}
+                        </p>
                       )}
+                      <h3 className="mt-1 font-serif text-xl font-semibold">
+                        {thread.clinicianName}
+                      </h3>
                       <p className="mt-1 text-sm text-[#554653] dark:text-[#D4C6D2]">
-                        {formatPurpose(item.purpose)}. {item.scope.map((scope) => scopeLabels[scope] ?? "Requested record").join(", ")}.
+                        Clinician · {formatPurpose(thread.purpose)}
                       </p>
-                      <p className="mt-1 text-xs text-[#554653] dark:text-[#D4C6D2]">
-                        Requested {formatDate(item.requestedAt)}
-                        {item.consentExpiresAt ? ` · access ends ${formatDate(item.consentExpiresAt)}` : ""}
+                      <p className="mt-2 text-sm leading-6">
+                        Records requested:{" "}
+                        {thread.scope
+                          .map((scope) => scopeLabels[scope] ?? "Requested record")
+                          .join(", ")}
                       </p>
                     </div>
-                    <span className="rounded-md bg-[#FBEAE6] px-3 py-2 text-sm font-semibold capitalize text-[#4A1D3F] dark:bg-[#493A4A] dark:text-[#F8F0F4]">
-                      {item.consentStatus ?? item.requestStatus}
+                    <span className="w-fit rounded-md bg-[#FBEAE6] px-3 py-2 text-sm font-semibold text-[#4A1D3F] dark:bg-[#493A4A] dark:text-[#F8F0F4]">
+                      {accessStatus(thread.consentStatus, thread.requestStatus)}
                     </span>
                   </div>
-                  {item.consentStatus === "active" && item.consentId && (
+
+                  <ol
+                    aria-label={`Access events for ${thread.clinicianName}`}
+                    className="mt-5 space-y-0 border-s-2 border-[#EEDBCE] ps-5 dark:border-[#6C586C]"
+                  >
+                    {thread.events.map((event, index) => (
+                      <li
+                        key={`${event.kind}-${event.occurredAt}-${index}`}
+                        className="relative min-h-12 pb-5 last:pb-0"
+                      >
+                        <span
+                          aria-hidden="true"
+                          className="absolute -start-[1.6rem] top-1 h-3 w-3 rounded-full border-2 border-[#4A1D3F] bg-[#FBEAE6] dark:border-[#F2B9AC] dark:bg-[#322936]"
+                        />
+                        <p className="text-sm leading-6">
+                          {describeHistoryEvent(
+                            event.kind,
+                            thread.clinicianName,
+                            event.documentType
+                          )}
+                        </p>
+                        <time
+                          dateTime={event.occurredAt}
+                          className="mt-1 block text-xs text-[#554653] dark:text-[#D4C6D2]"
+                        >
+                          {formatDate(event.occurredAt)}
+                        </time>
+                      </li>
+                    ))}
+                  </ol>
+
+                  {thread.consentExpiresAt && (
+                    <p className="mt-4 text-sm text-[#554653] dark:text-[#D4C6D2]">
+                      Access limit: {formatDate(thread.consentExpiresAt)}
+                    </p>
+                  )}
+                  {thread.consentStatus === "active" && thread.consentId && (
                     <button
                       type="button"
-                      disabled={busyId === item.consentId}
-                      onClick={() => void revokeConsent(item.consentId!)}
-                      className="mt-3 min-h-11 rounded-lg border border-[#A7443D] px-4 font-semibold text-[#85352F] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E8735A] disabled:opacity-60 dark:text-[#F2B9AC]"
+                      disabled={busyId === thread.consentId}
+                      onClick={() => void revokeConsent(thread.consentId!)}
+                      className="mt-4 min-h-11 rounded-lg border border-[#A7443D] px-4 font-semibold text-[#85352F] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E8735A] disabled:opacity-60 dark:text-[#F2B9AC]"
                     >
                       End this access
                     </button>
                   )}
                 </li>
-                  ))}
-                </ol>
-              )}
-              {history.reads.length > 0 && (
-                <section aria-labelledby="record-reads-heading">
-                  <h3 id="record-reads-heading" className="font-semibold">Record views</h3>
-                  <ol className="mt-2 space-y-2">
-                    {history.reads.map((read) => (
-                      <li key={read.id} className="rounded-xl border border-[#EEDBCE] bg-white px-4 py-3 text-sm dark:border-[#493A4A] dark:bg-[#322936]">
-                        <span className="font-semibold">{read.clinicianName}</span>
-                        {" viewed a "}
-                        {formatPurpose(read.documentType)}
-                        {" record on "}
-                        {formatDate(read.viewedAt)}.
-                      </li>
-                    ))}
-                  </ol>
-                </section>
-              )}
-            </div>
+              ))}
+            </ol>
           )}
         </section>
       </div>
@@ -473,9 +516,39 @@ export default function PatientAccessPage() {
 
 function formatPurpose(value: string): string {
   return value
-    .split("-")
+    .split(/[-_]/)
     .map((word) => `${word[0]?.toUpperCase() ?? ""}${word.slice(1)}`)
     .join(" ");
+}
+
+function describeHistoryEvent(
+  kind: "requested" | "approved" | "denied" | "read" | "revoked" | "expired",
+  clinicianName: string,
+  documentType?: string
+): string {
+  switch (kind) {
+    case "requested":
+      return `${clinicianName}, a clinician, requested access.`;
+    case "approved":
+      return `You approved access for ${clinicianName}.`;
+    case "denied":
+      return `You denied the request from ${clinicianName}.`;
+    case "read":
+      return `${clinicianName}, a clinician, viewed a ${documentTypeLabels[documentType ?? ""] ?? formatPurpose(documentType ?? "record").toLowerCase()} record.`;
+    case "revoked":
+      return `You ended access for ${clinicianName}.`;
+    case "expired":
+      return `Access for ${clinicianName} ended when its time limit expired.`;
+  }
+}
+
+function accessStatus(consentStatus: string | null, requestStatus: string): string {
+  if (consentStatus === "active") return "Access active";
+  if (consentStatus === "revoked") return "Access ended";
+  if (consentStatus === "expired") return "Access expired";
+  if (requestStatus === "denied") return "Request denied";
+  if (requestStatus === "pending") return "Awaiting decision";
+  return "Request complete";
 }
 
 function formatDate(value: string): string {
