@@ -13,6 +13,8 @@ import { auditEvents } from "../../database/schema.js";
 import { env } from "../../config/env.js";
 import type { AuditEventInput } from "./audit.types.js";
 
+type AuditInsertExecutor = Pick<typeof db, "insert">;
+
 @Injectable()
 export class AuditService {
   /** HMAC of the last inserted record hash for chain integrity */
@@ -23,6 +25,20 @@ export class AuditService {
   }
 
   async log(event: AuditEventInput): Promise<void> {
+    this.lastHash = await this.insertEvent(event, db);
+  }
+
+  async logInTransaction(event: AuditEventInput): Promise<void> {
+    const integrityHash = await db.transaction((transaction) =>
+      this.insertEvent(event, transaction)
+    );
+    this.lastHash = integrityHash;
+  }
+
+  private async insertEvent(
+    event: AuditEventInput,
+    executor: AuditInsertExecutor
+  ): Promise<string> {
     const previousHash = this.lastHash;
 
     const payload = JSON.stringify({
@@ -35,9 +51,7 @@ export class AuditService {
       .update(payload)
       .digest("hex");
 
-    this.lastHash = integrityHash;
-
-    await db.insert(auditEvents).values({
+    await executor.insert(auditEvents).values({
       actorId: event.actorId,
       actorRole: event.actorRole,
       action: event.action,
@@ -49,5 +63,6 @@ export class AuditService {
       integrityHash,
       previousHash,
     });
+    return integrityHash;
   }
 }

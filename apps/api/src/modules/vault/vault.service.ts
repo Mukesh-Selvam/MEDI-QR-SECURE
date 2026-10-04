@@ -199,7 +199,12 @@ export class VaultService {
     actorId: string,
     actorRole: string,
     ipHash: string
-  ): Promise<{ url: string; expiresAt: Date; sourceLabel: string }> {
+  ): Promise<{
+    url: string;
+    expiresAt: Date;
+    expiresInSeconds: number;
+    sourceLabel: string;
+  }> {
     const [doc] = await db
       .select()
       .from(documents)
@@ -213,16 +218,7 @@ export class VaultService {
       );
     }
 
-    // Generate presigned URL — 5 minutes
-    const { url, expiresAt } = await this.storage.generatePresignedGetUrl(
-      doc.storageBucket,
-      doc.storageKey,
-      "document", // never expose real filename
-      doc.mimeType
-    );
-
-    // Write audit event atomically with URL generation
-    await this.audit.log({
+    await this.audit.logInTransaction({
       actorId,
       actorRole,
       action: "DOCUMENT_VIEWED",
@@ -232,9 +228,18 @@ export class VaultService {
       ipHash,
     });
 
+    // Generate the URL only after the audit transaction commits.
+    const { url, expiresAt } = await this.storage.generatePresignedGetUrl(
+      doc.storageBucket,
+      doc.storageKey,
+      "document", // never expose real filename
+      doc.mimeType
+    );
+
     return {
       url,
       expiresAt,
+      expiresInSeconds: PRESIGNED_URL_EXPIRY_SECONDS,
       sourceLabel: doc.uploadSource === "facility-verified" ? "verified-source" : "patient-uploaded",
     };
   }
@@ -243,7 +248,7 @@ export class VaultService {
    * Retrieves and decrypts a document in-memory for the zero-footprint viewer.
    * Plaintext is returned in a Buffer, to be streamed with anti-caching headers.
    * Plaintext NEVER touches disk.
-   * Logs an audit entry for EVERY view with actorId, role, documentId, timestamp, and purpose.
+   * Commits an audit entry before reading or decrypting document bytes.
    */
   async getDecryptedDocument(
     documentId: string,
@@ -270,7 +275,17 @@ export class VaultService {
       );
     }
 
-    // 1. Fetch encrypted ciphertext from storage
+    await this.audit.logInTransaction({
+      actorId,
+      actorRole,
+      action: "DOCUMENT_VIEWED",
+      resourceType: "document",
+      resourceId: documentId,
+      outcome: "SUCCESS",
+      ipHash,
+    });
+
+    // 1. Fetch encrypted ciphertext only after the audit transaction commits.
     const ciphertext = await this.storage.getObject(doc.storageBucket, doc.storageKey);
 
     // 2. Fetch envelope crypto keys
@@ -292,17 +307,6 @@ export class VaultService {
       iv: cryptoKey.iv,
       authTag: cryptoKey.authTag,
       sha256Plaintext: cryptoKey.sha256Plaintext,
-    });
-
-    // 4. Audit log entry for EVERY document view
-    await this.audit.log({
-      actorId,
-      actorRole,
-      action: "DOCUMENT_VIEWED",
-      resourceType: "document",
-      resourceId: documentId,
-      outcome: "SUCCESS",
-      ipHash,
     });
 
     void purpose; // Kept for audit context
