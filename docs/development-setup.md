@@ -66,11 +66,41 @@ routes OTP messages to Mailpit; it does not send SMS to the phone number. Enter
 the code before its five-minute expiration.
 
 The Keycloak realm is imported and its discovery endpoint is available at
-<http://localhost:8080/realms/mediqr/.well-known/openid-configuration>. The
-current mobile OTP handler provisions the application user in Postgres and
-issues the application session locally. The API validates its own locally
-signed application tokens; it does not yet validate Keycloak staff tokens or
-provision Keycloak users.
+<http://localhost:8080/realms/mediqr/.well-known/openid-configuration>.
+Patients sign in with OTP. Staff sign in through Keycloak at
+<http://localhost:3000/login/clinician>, with the realm's required MFA setup.
+
+### Link a fake local clinician account
+
+The API needs a local clinician profile linked to the Keycloak user's subject
+before it can resolve staff access. For local development only, create a
+Keycloak user in the `mediqr` realm, assign the `clinician` realm role, and
+complete MFA enrollment. Use an email ending in `@mediqr.invalid`; do not use a
+real clinician identity. In the Keycloak user details, copy the user's ID.
+
+Set the copied ID and the fake email used on that Keycloak user in PowerShell,
+then run the provisioning command:
+
+```powershell
+$env:DEV_CLINICIAN_KEYCLOAK_ID = "<Keycloak user ID>"
+$env:DEV_CLINICIAN_EMAIL = "clinician.dev@mediqr.invalid"
+pnpm --filter @mediqr/api provision:dev-clinician
+Remove-Item Env:DEV_CLINICIAN_KEYCLOAK_ID
+Remove-Item Env:DEV_CLINICIAN_EMAIL
+```
+
+The command creates or links an active local clinician user and a clearly fake,
+unverified profile in one database transaction. It does not set or reset a
+Keycloak password, create a login bypass, or mark the profile verified. It
+refuses production, non-fake email addresses, account mismatches, and verified
+profiles. It is safe to rerun for the same unverified account.
+
+Now open <http://localhost:3000/login/clinician>, sign in with the Keycloak
+username and password you created, and complete the MFA prompt. A successful
+login for this development profile should show the pending-verification screen,
+not patient records. Only a platform administrator can verify a clinician
+through the application. Until that review is completed, the account must not
+access patient data.
 
 ## Verification
 
