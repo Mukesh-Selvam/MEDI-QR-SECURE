@@ -75,7 +75,7 @@ const VALID_ENV: EnvInput = {
   CLAMAV_HOST: "localhost",
   KEYCLOAK_BASE_URL: "http://localhost:8080",
   KEYCLOAK_REALM: "mediqr",
-  MASTER_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  MASTER_ENCRYPTION_KEY: Buffer.alloc(32, 0x11).toString("hex"),
   JWT_ACCESS_SECRET: "jwt_access_secret_must_be_32_chars_min",
   JWT_REFRESH_SECRET: "jwt_refresh_secret_must_be_32_chars_",
   HMAC_QR_SIGNING_KEY: "hmac_qr_signing_key_minimum_32_chars",
@@ -180,7 +180,7 @@ describe("Environment Schema — invalid formats", () => {
   it("rejects MASTER_ENCRYPTION_KEY shorter than 64 hex chars", () => {
     const result = EnvSchema.safeParse({
       ...VALID_ENV,
-      MASTER_ENCRYPTION_KEY: "tooshort",
+      MASTER_ENCRYPTION_KEY: "short",
     });
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -193,7 +193,7 @@ describe("Environment Schema — invalid formats", () => {
     const result = EnvSchema.safeParse({
       ...VALID_ENV,
       // 64 chars but contains 'g' which is not hex
-      MASTER_ENCRYPTION_KEY: "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+      MASTER_ENCRYPTION_KEY: "g".repeat(64),
     });
     expect(result.success).toBe(false);
   });
