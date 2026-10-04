@@ -152,6 +152,19 @@ describe("Notifications (integration)", () => {
 
     const patientNotifications = await service.listForUser(patientUserId);
     const guardianNotifications = await service.listForUser(guardianUserId);
+    const notificationFields = [
+      "createdAt",
+      "eventType",
+      "id",
+      "readAt",
+      "requestId",
+    ];
+    for (const notification of [...patientNotifications, ...guardianNotifications]) {
+      expect(Object.keys(notification).sort()).toEqual(notificationFields);
+      expect(JSON.stringify(notification)).not.toContain(
+        "Fake Notification Patient"
+      );
+    }
     expect(patientNotifications.map(({ eventType }) => eventType)).toEqual(
       eventTypes
     );
