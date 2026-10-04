@@ -22,6 +22,7 @@ import {
   integer,
   jsonb,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 // ---------------------------------------------------------------------------
 // Enumerations
@@ -87,6 +88,12 @@ export const documentStatusEnum = pgEnum("document_status", [
   "ready",
   "deleted",
   "rejected",
+]);
+
+export const qrCredentialStatusEnum = pgEnum("qr_credential_status", [
+  "active",
+  "rotated",
+  "revoked",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -402,6 +409,30 @@ export const fhirDocumentReferences = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// 11. QR Credentials (opaque bearer credentials; only token hashes persist)
+// ---------------------------------------------------------------------------
+export const qrCredentials = pgTable(
+  "qr_credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "cascade" }),
+    tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+    status: qrCredentialStatusEnum("status").notNull().default("active"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    rotatedAt: timestamp("rotated_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("qr_credentials_patient_id_idx").on(table.patientId),
+    uniqueIndex("qr_credentials_one_active_per_patient_idx")
+      .on(table.patientId)
+      .where(sql`${table.status} = 'active'`),
+  ]
+);
+
+// ---------------------------------------------------------------------------
 // Type exports
 // ---------------------------------------------------------------------------
 export type User = typeof users.$inferSelect;
@@ -420,6 +451,8 @@ export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
 export type AuditEvent = typeof auditEvents.$inferSelect;
 export type NewAuditEvent = typeof auditEvents.$inferInsert;
+export type QrCredential = typeof qrCredentials.$inferSelect;
+export type NewQrCredential = typeof qrCredentials.$inferInsert;
 
 // Vault types
 export type Document = typeof documents.$inferSelect;

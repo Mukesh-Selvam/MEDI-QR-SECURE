@@ -113,6 +113,21 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
     );
   });
 
+  it("resolves a patient's own profile as the resource for credential management", async () => {
+    mocks.queryResults = [[{ id: "patient-a", userId: "user-a" }]];
+    const context = createContext(reflector, patientA, {}, "patient", "update");
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(mocks.checkResource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resource: expect.objectContaining({
+          id: "patient-a",
+          attributes: { owner_id: "user-a", patient_id: "patient-a" },
+        }),
+      })
+    );
+  });
+
   it("denies patient A access to patient B's document", async () => {
     mocks.queryResults = [
       [{ patientId: "patient-b" }],

@@ -29,6 +29,13 @@
       "when": 1791096668465,
       "tag": "0003_enforce_patient_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791120000000,
+      "tag": "0004_qr_credentials",
+      "breakpoints": true
     }
   ]
 }

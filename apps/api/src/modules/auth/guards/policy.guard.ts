@@ -22,6 +22,7 @@ import {
   findDocumentPatientOwner,
   findGuardianWardOwnerIds,
   findPatientOwner,
+  findPatientOwnerByUserId,
   hasActiveFacilityPatientRelationship,
   type PatientOwner,
 } from "../patient-access.js";
@@ -96,6 +97,18 @@ export class PolicyGuard implements CanActivate {
         }
       }
 
+      if (
+        policy.resource === "patient" &&
+        (policy.action === "read" || policy.action === "update")
+      ) {
+        patient = params?.id
+          ? await findPatientOwner(params.id)
+          : await findPatientOwnerByUserId(user.id);
+        if (!patient) {
+          throw new ForbiddenException("Patient record not found");
+        }
+      }
+
       const guardianWardIds =
         user.role === "guardian"
           ? await findGuardianWardOwnerIds(user.id)
@@ -121,7 +134,7 @@ export class PolicyGuard implements CanActivate {
         },
         resource: {
           kind: policy.resource,
-          id: resourceId,
+          id: policy.resource === "patient" ? patient?.id ?? resourceId : resourceId,
           attributes: {
             owner_id: patient?.userId ?? "",
             ...(patient ? { patient_id: patient.id } : {}),

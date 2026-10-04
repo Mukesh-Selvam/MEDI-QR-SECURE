@@ -12,6 +12,7 @@ import { AuditModule } from "./modules/audit/audit.module.js";
 import { NotificationsModule } from "./modules/notifications/notifications.module.js";
 import { AdminModule } from "./modules/admin/admin.module.js";
 import { VaultModule } from "./modules/vault/vault.module.js";
+import { QrModule } from "./modules/qr/qr.module.js";
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { VaultModule } from "./modules/vault/vault.module.js";
     NotificationsModule,
     AdminModule,
     VaultModule,
+    QrModule,
   ],
 })
 export class AppModule {}

@@ -25,6 +25,17 @@ export async function findPatientOwner(patientId: string): Promise<PatientOwner 
   return patient;
 }
 
+export async function findPatientOwnerByUserId(
+  userId: string
+): Promise<PatientOwner | undefined> {
+  const [patient] = await db
+    .select({ id: patients.id, userId: patients.userId })
+    .from(patients)
+    .where(eq(patients.userId, userId))
+    .limit(1);
+  return patient;
+}
+
 export async function findDocumentPatientOwner(
   documentId: string
 ): Promise<PatientOwner | undefined> {

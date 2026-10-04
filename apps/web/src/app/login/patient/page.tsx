@@ -329,6 +329,13 @@ export default function PatientLoginPage() {
                 </div>
               </div>
 
+              <Link
+                href="/patient/credentials"
+                className="mb-6 flex min-h-11 items-center justify-center rounded-xl bg-[#4A1D3F] px-4 py-3 text-sm font-semibold text-white hover:bg-[#3D2E45]"
+              >
+                Manage QR credentials
+              </Link>
+
               {/* Security Invariants Checklist */}
               <div className="space-y-2 text-xs text-[#5A4862] bg-[#FDFBF9] p-4 rounded-xl border border-[#EEDBCE]">
                 <div className="font-semibold text-[#2B2230] mb-1">Session Invariants Verified:</div>
