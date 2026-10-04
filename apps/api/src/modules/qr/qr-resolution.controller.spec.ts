@@ -5,7 +5,7 @@ import { QrResolutionController } from "./qr-resolution.controller.js";
 import type { QrResolutionService } from "./qr-resolution.service.js";
 
 describe("QrResolutionController", () => {
-  it("returns an identical response for unknown and expired QR values", async () => {
+  it("returns an identical response for unknown, expired, revoked, and rate-limited QR values", async () => {
     const resolve = vi.fn().mockResolvedValue(undefined);
     const controller = new QrResolutionController({
       resolve,
@@ -23,8 +23,21 @@ describe("QrResolutionController", () => {
       request,
       reply
     );
+    const revoked = await controller.resolve(
+      { token: "revoked", resolutionId: randomUUID() },
+      request,
+      reply
+    );
+    const rateLimited = await controller.resolve(
+      { token: "rate-limited", resolutionId: randomUUID() },
+      request,
+      reply
+    );
 
     expect(unknown).toEqual(expired);
+    expect(unknown).toEqual(revoked);
+    expect(unknown).toEqual(rateLimited);
+    expect(resolve).toHaveBeenCalledTimes(4);
     expect(reply.header).toHaveBeenCalledWith("Cache-Control", "no-store");
     expect(reply.header).toHaveBeenCalledWith("Referrer-Policy", "no-referrer");
   });

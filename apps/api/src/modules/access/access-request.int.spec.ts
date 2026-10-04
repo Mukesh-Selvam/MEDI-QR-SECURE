@@ -80,7 +80,7 @@ describe("Access request creation (integration)", () => {
 
     audit = new AuditService();
     const redisClient = createRedisClient();
-    resolution = new QrResolutionService(redisClient);
+    resolution = new QrResolutionService(redisClient, audit);
     credentials = new QrCredentialsService(audit);
     service = new AccessRequestService(
       audit,
