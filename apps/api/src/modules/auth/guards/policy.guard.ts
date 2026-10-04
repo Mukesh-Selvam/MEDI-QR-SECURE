@@ -23,6 +23,8 @@ import {
   findDocumentAccessContext,
   hasActiveConsentScope,
   findAccessRequestPatientOwner,
+  findAccessRequestPolicyContext,
+  findActiveRequestConsentContext,
   findConsentResource,
   findGuardianWardOwnerIds,
   findNotificationRecipient,
@@ -79,6 +81,7 @@ export class PolicyGuard implements CanActivate {
     const resourceId =
       params?.id ??
       params?.patientId ??
+      params?.requestId ??
       (typeof patientIdHeader === "string" ? patientIdHeader : "system");
 
     try {
@@ -89,7 +92,9 @@ export class PolicyGuard implements CanActivate {
         policy.resource === "access-request" &&
         user.role === "clinician" &&
         user.isVerified === true &&
-        (policy.action === "create" || policy.action === "approve-with-otp");
+        (policy.action === "create" ||
+          policy.action === "approve-with-otp" ||
+          policy.action === "read-status");
       const verifiedClinicianConsentRead =
         policy.resource === "consent" &&
         policy.action === "read" &&
@@ -119,6 +124,10 @@ export class PolicyGuard implements CanActivate {
         | Awaited<ReturnType<typeof findConsentResource>>
         | undefined;
       let notificationOwnerId: string | undefined;
+      let requestGranteeId: string | undefined;
+      let requestConsentContext:
+        | Awaited<ReturnType<typeof findActiveRequestConsentContext>>
+        | undefined;
       if (
         policy.resource === "notification" &&
         policy.action === "update" &&
@@ -133,7 +142,24 @@ export class PolicyGuard implements CanActivate {
         policy.resource === "document" &&
         policy.action === "read"
       ) {
-        if (params?.patientId) {
+        if (params?.requestId) {
+          if (user.role !== "clinician" || user.isVerified !== true) {
+            throw new ForbiddenException("Verified clinician access is required");
+          }
+          requestConsentContext = await findActiveRequestConsentContext(
+            params.requestId,
+            user.id
+          );
+          patient = requestConsentContext
+            ? await findPatientOwner(requestConsentContext.patientId)
+            : undefined;
+          hasConsentGrant =
+            requestConsentContext !== undefined &&
+            (requestConsentContext.scope.includes("timeline") ||
+              requestConsentContext.scope.some((scope) =>
+                scope.startsWith("document:")
+              ));
+        } else if (params?.patientId) {
           patient = await findPatientOwner(params.patientId);
         } else if (params?.id) {
           const context = await findDocumentAccessContext(params.id);
@@ -171,7 +197,20 @@ export class PolicyGuard implements CanActivate {
         !["create", "list"].includes(policy.action) &&
         params?.id
       ) {
-        patient = await findAccessRequestPatientOwner(params.id);
+        if (policy.action === "read-status") {
+          const requestContext = await findAccessRequestPolicyContext(params.id);
+          if (
+            user.role !== "clinician" ||
+            user.isVerified !== true ||
+            requestContext?.clinicianUserId !== user.id
+          ) {
+            throw new ForbiddenException("Access request not found");
+          }
+          patient = requestContext.patient;
+          requestGranteeId = requestContext.clinicianUserId;
+        } else {
+          patient = await findAccessRequestPatientOwner(params.id);
+        }
         if (!patient) {
           throw new ForbiddenException("Access request not found");
         }
@@ -189,11 +228,13 @@ export class PolicyGuard implements CanActivate {
       }
 
       if (clinicianDocumentRead && patient && user.isVerified === true) {
-        const requiredScope = params?.patientId
-          ? "timeline"
-          : documentType
-            ? `document:${documentType}`
-            : undefined;
+        const requiredScope = params?.requestId
+          ? undefined
+          : params?.patientId
+            ? "timeline"
+            : documentType
+              ? `document:${documentType}`
+              : undefined;
         if (requiredScope) {
           hasConsentGrant = await hasActiveConsentScope(
             patient.id,
@@ -248,6 +289,7 @@ export class PolicyGuard implements CanActivate {
                   expires_at: consentResource.expiresAt.toISOString(),
                 }
               : {}),
+            ...(requestGranteeId ? { grantee_id: requestGranteeId } : {}),
           },
         },
         actions: [policy.action],

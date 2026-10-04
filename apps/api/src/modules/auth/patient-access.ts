@@ -99,7 +99,10 @@ export async function hasActiveConsentScope(
         eq(consents.granteeUserId, clinicianUserId),
         eq(consents.status, "active"),
         gt(consents.expiresAt, new Date()),
-        sql`${consents.scope} @> ${JSON.stringify([scope])}::jsonb`
+        or(
+          sql`${consents.scope} @> ${JSON.stringify([scope])}::jsonb`,
+          sql`${consents.scope} @> '["timeline"]'::jsonb`
+        )
       )
     )
     .limit(1);
@@ -120,11 +123,76 @@ export async function findActiveConsentRequestId(
         eq(consents.granteeUserId, clinicianUserId),
         eq(consents.status, "active"),
         gt(consents.expiresAt, new Date()),
-        sql`${consents.scope} @> ${JSON.stringify([scope])}::jsonb`
+        or(
+          sql`${consents.scope} @> ${JSON.stringify([scope])}::jsonb`,
+          sql`${consents.scope} @> '["timeline"]'::jsonb`
+        )
       )
     )
     .limit(1);
   return consent?.requestId;
+}
+
+export interface ActiveRequestConsentContext {
+  patientId: string;
+  scope: string[];
+  purpose: string;
+  expiresAt: Date;
+}
+
+export async function findActiveRequestConsentContext(
+  requestId: string,
+  clinicianUserId: string
+): Promise<ActiveRequestConsentContext | undefined> {
+  const [context] = await db
+    .select({
+      patientId: accessRequests.patientId,
+      scope: consents.scope,
+      purpose: consents.purpose,
+      expiresAt: consents.expiresAt,
+    })
+    .from(accessRequests)
+    .innerJoin(consents, eq(consents.accessRequestId, accessRequests.id))
+    .where(
+      and(
+        eq(accessRequests.id, requestId),
+        eq(accessRequests.clinicianUserId, clinicianUserId),
+        eq(accessRequests.status, "approved"),
+        eq(consents.granteeUserId, clinicianUserId),
+        eq(consents.status, "active"),
+        gt(consents.expiresAt, new Date())
+      )
+    )
+    .limit(1);
+  return context;
+}
+
+export async function findAccessRequestPolicyContext(
+  requestId: string
+): Promise<
+  | {
+      patient: PatientOwner;
+      clinicianUserId: string;
+    }
+  | undefined
+> {
+  const [context] = await db
+    .select({
+      patientId: accessRequests.patientId,
+      patientUserId: patients.userId,
+      clinicianUserId: accessRequests.clinicianUserId,
+    })
+    .from(accessRequests)
+    .innerJoin(patients, eq(accessRequests.patientId, patients.id))
+    .where(eq(accessRequests.id, requestId))
+    .limit(1);
+
+  return context
+    ? {
+        patient: { id: context.patientId, userId: context.patientUserId },
+        clinicianUserId: context.clinicianUserId,
+      }
+    : undefined;
 }
 
 export async function findAccessRequestPatientOwner(

@@ -5,6 +5,9 @@ import {
   HttpCode,
   HttpStatus,
   Inject,
+  Get,
+  Param,
+  ParseUUIDPipe,
   Post,
   Req,
   UseGuards,
@@ -46,5 +49,14 @@ export class AccessRequestController {
       .update(request.ip ?? "0.0.0.0")
       .digest("hex");
     return this.accessRequests.create(user, parsed.data, ipHash);
+  }
+
+  @Get(":id/status")
+  @RequirePolicy({ resource: "access-request", action: "read-status" })
+  status(
+    @Param("id", ParseUUIDPipe) requestId: string,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.accessRequests.getStatus(user, requestId);
   }
 }

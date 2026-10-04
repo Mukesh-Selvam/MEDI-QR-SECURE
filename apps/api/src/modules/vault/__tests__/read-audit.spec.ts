@@ -19,10 +19,12 @@ const mocks = vi.hoisted(() => ({
   notificationRecords: vi.fn(),
   notificationEmail: vi.fn(),
   findActiveConsentRequestId: vi.fn(),
+  findActiveRequestConsentContext: vi.fn(),
 }));
 
 vi.mock("../../auth/patient-access.js", () => ({
   findActiveConsentRequestId: mocks.findActiveConsentRequestId,
+  findActiveRequestConsentContext: mocks.findActiveRequestConsentContext,
   hasActiveFacilityPatientRelationship: vi.fn(),
   isVerifiedGuardianOfPatient: vi.fn(),
 }));
@@ -61,12 +63,22 @@ const readyDocument = {
 function queryBuilder(result: unknown): object {
   const builder = {
     from: vi.fn(),
+    innerJoin: vi.fn(),
     where: vi.fn(),
     limit: vi.fn(),
+    for: vi.fn(),
+    orderBy: vi.fn(),
+    then: (
+      resolve: (value: unknown) => unknown,
+      reject: (reason: unknown) => unknown
+    ) => Promise.resolve(result).then(resolve, reject),
   };
   builder.from.mockReturnValue(builder);
+  builder.innerJoin.mockReturnValue(builder);
   builder.where.mockReturnValue(builder);
-  builder.limit.mockResolvedValue(result);
+  builder.orderBy.mockReturnValue(builder);
+  builder.limit.mockReturnValue(builder);
+  builder.for.mockReturnValue(builder);
   return builder;
 }
 
@@ -92,6 +104,9 @@ function buildService(): VaultService {
 describe("VaultService read audit ordering", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.transaction.mockImplementation((callback) =>
+      callback(mocks.transactionClient)
+    );
     mocks.selectResults = [[readyDocument]];
     mocks.select.mockImplementation(() => queryBuilder(mocks.selectResults.shift()));
     mocks.audit.mockResolvedValue("integrity-hash");
@@ -100,6 +115,7 @@ describe("VaultService read audit ordering", () => {
     mocks.findActiveConsentRequestId.mockResolvedValue(
       "00000000-0000-0000-0000-000000000004"
     );
+    mocks.findActiveRequestConsentContext.mockResolvedValue(undefined);
     mocks.signUrl.mockResolvedValue({
       url: "https://storage.invalid/signed",
       expiresAt: new Date(Date.now() + 300_000),
@@ -314,5 +330,86 @@ describe("VaultService read audit ordering", () => {
 
     expect(mocks.audit).not.toHaveBeenCalled();
     expect(mocks.getObject).not.toHaveBeenCalled();
+  });
+
+  it("returns only ready documents in the active request consent scope", async () => {
+    const operations: string[] = [];
+    const expiresAt = new Date(Date.now() + 60_000);
+    mocks.selectResults = [[{
+      patientId: readyDocument.patientId,
+      scope: ["document:lab"],
+      purpose: "clinical-care",
+      expiresAt,
+    }], [
+      {
+        ...readyDocument,
+        documentType: "lab",
+        fileSizeBytes: 128,
+        scanStatus: "clean",
+        documentDate: null,
+        createdAt: new Date(),
+      },
+      {
+        ...readyDocument,
+        id: "00000000-0000-0000-0000-000000000006",
+        documentType: "scan",
+        fileSizeBytes: 128,
+        scanStatus: "clean",
+        documentDate: null,
+        createdAt: new Date(),
+      },
+    ]];
+    mocks.audit.mockImplementation(async () => {
+      operations.push("audit-written");
+      return "integrity-hash";
+    });
+    let selectCount = 0;
+    mocks.select.mockImplementation(() => {
+      operations.push(selectCount++ === 0 ? "consent-checked" : "timeline-selected");
+      return queryBuilder(mocks.selectResults.shift());
+    });
+    mocks.transaction.mockImplementation((callback) =>
+      callback({ select: mocks.select })
+    );
+
+    const result = await buildService().getRequestTimeline(
+      "00000000-0000-0000-0000-000000000004",
+      "00000000-0000-0000-0000-000000000001",
+      "clinician",
+      "a".repeat(64)
+    );
+
+    expect(operations).toEqual([
+      "consent-checked",
+      "audit-written",
+      "timeline-selected",
+    ]);
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0]?.type).toBe("lab");
+    expect(result.groups[0]?.documents.map(({ documentType }) => documentType)).toEqual([
+      "lab",
+    ]);
+    expect(result.consent).toEqual({
+      scope: ["document:lab"],
+      purpose: "clinical-care",
+      expiresAt: expiresAt.toISOString(),
+    });
+  });
+
+  it("locks request-scoped records when consent is no longer active", async () => {
+    mocks.selectResults = [[]];
+    mocks.transaction.mockImplementation((callback) =>
+      callback({ select: mocks.select })
+    );
+
+    await expect(
+      buildService().getRequestTimeline(
+        "00000000-0000-0000-0000-000000000004",
+        "00000000-0000-0000-0000-000000000001",
+        "clinician",
+        "a".repeat(64)
+      )
+    ).rejects.toThrow(/not active/);
+    expect(mocks.audit).not.toHaveBeenCalled();
   });
 });

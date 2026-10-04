@@ -30,11 +30,13 @@ resources:
     id: own-request
     attr:
       owner_id: patient-user-a
+      grantee_id: clinician-a
   another_request:
     kind: access-request
     id: another-request
     attr:
       owner_id: patient-user-b
+      grantee_id: clinician-b
   ward_request:
     kind: access-request
     id: ward-request
@@ -46,7 +48,7 @@ tests:
     input:
       principals: [verified_clinician]
       resources: [new_request]
-      actions: [create, approve, deny, approve-with-otp, list]
+      actions: [create, approve, deny, approve-with-otp, read-status, list]
     expected:
       - principal: verified_clinician
         resource: new_request
@@ -55,25 +57,42 @@ tests:
           approve: EFFECT_DENY
           deny: EFFECT_DENY
           approve-with-otp: EFFECT_ALLOW
+          read-status: EFFECT_DENY
           list: EFFECT_DENY
+
+  - name: Verified clinician can check only their own request status
+    input:
+      principals: [verified_clinician]
+      resources: [own_request, another_request]
+      actions: [read-status]
+    expected:
+      - principal: verified_clinician
+        resource: own_request
+        actions:
+          read-status: EFFECT_ALLOW
+      - principal: verified_clinician
+        resource: another_request
+        actions:
+          read-status: EFFECT_DENY
 
   - name: Unverified clinician cannot create or confirm access requests
     input:
       principals: [unverified_clinician]
       resources: [new_request]
-      actions: [create, approve-with-otp]
+      actions: [create, approve-with-otp, read-status]
     expected:
       - principal: unverified_clinician
         resource: new_request
         actions:
           create: EFFECT_DENY
           approve-with-otp: EFFECT_DENY
+          read-status: EFFECT_DENY
 
   - name: Patient can decide only their own request
     input:
       principals: [patient]
       resources: [own_request, another_request, new_request]
-      actions: [approve, deny, create, list]
+      actions: [approve, deny, create, read-status, list]
     expected:
       - principal: patient
         resource: own_request
@@ -81,6 +100,7 @@ tests:
           approve: EFFECT_ALLOW
           deny: EFFECT_ALLOW
           create: EFFECT_DENY
+          read-status: EFFECT_DENY
           list: EFFECT_ALLOW
       - principal: patient
         resource: another_request
@@ -88,6 +108,7 @@ tests:
           approve: EFFECT_DENY
           deny: EFFECT_DENY
           create: EFFECT_DENY
+          read-status: EFFECT_DENY
           list: EFFECT_ALLOW
       - principal: patient
         resource: new_request
@@ -95,6 +116,7 @@ tests:
           approve: EFFECT_DENY
           deny: EFFECT_DENY
           create: EFFECT_DENY
+          read-status: EFFECT_DENY
           list: EFFECT_ALLOW
 
   - name: Guardian can decide only a verified ward request

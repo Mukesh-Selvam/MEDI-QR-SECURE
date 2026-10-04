@@ -146,6 +146,69 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
     );
   });
 
+  it("resolves a clinician records request to its database patient and active consent", async () => {
+    const clinician: AuthenticatedUser = {
+      id: "clinician-user",
+      sub: "clinician-sub",
+      role: "clinician",
+      isVerified: true,
+    };
+    mocks.queryResults = [
+      [{
+        patientId: "patient-a",
+        scope: ["document:lab"],
+        purpose: "clinical-care",
+        expiresAt: new Date(Date.now() + 60_000),
+      }],
+      [{ id: "patient-a", userId: "patient-user-a" }],
+    ];
+    mocks.checkResource.mockResolvedValue({ isAllowed: () => true });
+    const context = createContext(
+      reflector,
+      clinician,
+      { requestId: "request-a" }
+    );
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(mocks.checkResource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resource: expect.objectContaining({
+          id: "request-a",
+          attributes: {
+            owner_id: "patient-user-a",
+            patient_id: "patient-a",
+          },
+        }),
+        principal: expect.objectContaining({
+          attributes: expect.objectContaining({
+            has_consent_grant: true,
+            has_scope: true,
+          }),
+        }),
+      })
+    );
+  });
+
+  it("denies a clinician whose request has no active request-bound consent", async () => {
+    const clinician: AuthenticatedUser = {
+      id: "clinician-user",
+      sub: "clinician-sub",
+      role: "clinician",
+      isVerified: true,
+    };
+    mocks.queryResults = [[]];
+    const context = createContext(
+      reflector,
+      clinician,
+      { requestId: "request-without-consent" }
+    );
+
+    await expect(guard.canActivate(context)).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+    expect(mocks.checkResource).not.toHaveBeenCalled();
+  });
+
   it("allows a guardian to read only a verified, unexpired child's document", async () => {
     const guardian: AuthenticatedUser = {
       id: "guardian-user",

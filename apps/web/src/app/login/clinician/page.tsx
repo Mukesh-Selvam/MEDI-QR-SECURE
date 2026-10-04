@@ -217,6 +217,12 @@ export default function ClinicianLoginPage() {
                 checked against consent and policy for every request.
               </p>
             </div>
+            <Link
+              href="/request-access"
+              className="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-[#4A1D3F] px-4 py-3 text-sm font-semibold text-white hover:bg-[#3A1632] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E8735A]"
+            >
+              Request access from a patient QR
+            </Link>
             {error && (
               <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">
                 {error}

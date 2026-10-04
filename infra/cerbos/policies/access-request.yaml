@@ -16,6 +16,15 @@ resourcePolicy:
       condition:
         match:
           expr: request.principal.attr.is_verified == true
+    - actions: ["read-status"]
+      roles: ["clinician"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.principal.attr.is_verified == true
+              - expr: request.resource.attr.grantee_id == request.principal.id
     - actions: ["list"]
       roles: ["patient", "guardian"]
       effect: EFFECT_ALLOW

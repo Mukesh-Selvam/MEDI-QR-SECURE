@@ -1,4 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 import { Client } from "pg";
 import { expect, test } from "@playwright/test";
 
@@ -160,6 +162,10 @@ test.describe("browser authentication", () => {
     await page.locator("#saveTOTPBtn").click();
 
     await expect(page).toHaveURL(/\/login\/clinician\?auth=mfa-setup/);
+    await page.goto("/login/clinician");
+    await page
+      .getByRole("link", { name: "Continue with secure sign-in" })
+      .waitFor({ state: "visible" });
     await page
       .getByRole("link", { name: "Continue with secure sign-in" })
       .click();
@@ -292,7 +298,7 @@ test.describe("browser authentication", () => {
       throw new Error("The patient QR credential response was incomplete.");
     }
 
-    const uploadResult = await patientPage.evaluate(async (patientId) => {
+    const uploadResult = await patientPage.evaluate(async ({ patientId, pdfContent }) => {
       const csrfCookie = document.cookie
         .split("; ")
         .find((item) => item.startsWith("__Host-mediqr-csrf="));
@@ -305,7 +311,7 @@ test.describe("browser authentication", () => {
       form.append("documentDate", new Date().toISOString());
       form.append(
         "file",
-        new File(["%PDF-1.4\nMediQR fake integration record\n%%EOF"], "fake-lab.pdf", {
+        new File([pdfContent], "fake-lab.pdf", {
           type: "application/pdf",
         })
       );
@@ -320,7 +326,7 @@ test.describe("browser authentication", () => {
       });
       const body: unknown = await response.json();
       return { status: response.status, body };
-    }, patientRecordId);
+    }, { patientId: patientRecordId, pdfContent: createMinimalTestPdf() });
     if (uploadResult.status !== 202) {
       throw new Error("The fake record could not be staged for scanning.");
     }
@@ -394,6 +400,12 @@ test.describe("browser authentication", () => {
         `The access request failed with HTTP ${accessRequestResponse.status()}: ${message}`
       );
     }
+    const accessRequestBody = (await accessRequestResponse.json()) as {
+      requestId?: string;
+    };
+    if (!accessRequestBody.requestId) {
+      throw new Error("The access request response was incomplete.");
+    }
     await expect(
       clinicianPage.getByText("Request sent. Waiting for the patient to review it.")
     ).toBeVisible();
@@ -415,6 +427,61 @@ test.describe("browser authentication", () => {
       fullPage: true,
     });
 
+    const consoleStatusResponsePromise = clinicianPage.waitForResponse(
+      (response) =>
+        response.url().includes("/api/v1/access/requests/") &&
+        response.url().endsWith("/status") &&
+        response.request().method() === "GET"
+    );
+    const consoleTimelineResponsePromise = clinicianPage.waitForResponse(
+      (response) =>
+        response.url().includes("/api/v1/vault/requests/") &&
+        response.url().endsWith("/timeline") &&
+        response.request().method() === "GET"
+    );
+    await clinicianPage
+      .getByRole("link", { name: "Open clinician records console" })
+      .click();
+    const consoleStatusResponse = await consoleStatusResponsePromise;
+    if (!consoleStatusResponse.ok()) {
+      const failure: unknown = await consoleStatusResponse.json();
+      const publicMessage =
+        typeof failure === "object" &&
+        failure !== null &&
+        "message" in failure &&
+        typeof failure.message === "string"
+          ? failure.message.replace(
+              /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+              "[opaque id]"
+            )
+          : "No public error detail was returned.";
+      throw new Error(
+        `The clinician status check returned HTTP ${consoleStatusResponse.status()}: ${publicMessage}`
+      );
+    }
+    expect(consoleStatusResponse.status()).toBe(200);
+    const consoleTimelineResponse = await consoleTimelineResponsePromise;
+    expect(consoleTimelineResponse.status()).toBe(200);
+    await expect(
+      clinicianPage.getByRole("heading", { name: "Consent-scoped record view" })
+    ).toBeVisible();
+    await expect(clinicianPage.getByText("Access is active")).toBeVisible();
+    await expect(
+      clinicianPage.getByRole("heading", { name: "Laboratory records" })
+    ).toBeVisible();
+    await clinicianPage
+      .getByRole("region", { name: "Record timeline" })
+      .getByRole("button", { name: /Patient uploaded/ })
+      .click();
+    await expect(
+      clinicianPage.locator(
+        'section[aria-label="Read-only secure record viewer"] canvas'
+      )
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(
+      clinicianPage.getByRole("button", { name: /download/i })
+    ).toHaveCount(0);
+
     const firstRead = await clinicianPage.request.get(
       `/api/v1/vault/${uploadedDocumentId}/stream`
     );
@@ -426,10 +493,39 @@ test.describe("browser authentication", () => {
     await expect(
       patientPage.getByRole("status").filter({ hasText: "Access ended" })
     ).toBeVisible();
+    await expect(
+      clinicianPage.getByRole("alert").filter({ hasText: "Consent has been revoked" })
+    ).toBeVisible({ timeout: 10_000 });
     await patientPage.screenshot({
       path: testInfo.outputPath("consent-flow-revoked.png"),
       fullPage: true,
     });
+
+    function createMinimalTestPdf(): string {
+      const content = "BT /F1 16 Tf 24 120 Td (Fake laboratory record) Tj ET\n";
+      const objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 180] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}endstream`,
+      ];
+      let document = "%PDF-1.4\n";
+      const offsets: number[] = [];
+      for (const [index, body] of objects.entries()) {
+        offsets.push(Buffer.byteLength(document));
+        document += `${index + 1} 0 obj\n${body}\nendobj\n`;
+      }
+
+      const crossReferenceOffset = Buffer.byteLength(document);
+      document += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+      for (const offset of offsets) {
+        document += `${String(offset).padStart(10, "0")} 00000 n \n`;
+      }
+      document += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\n`;
+      document += `startxref\n${crossReferenceOffset}\n%%EOF`;
+      return document;
+    }
 
     const readAfterRevocation = await clinicianPage.request.get(
       `/api/v1/vault/${uploadedDocumentId}/stream`
@@ -446,10 +542,81 @@ test.describe("browser authentication", () => {
       /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
     );
     expect(historyText).not.toContain("fake-lab.pdf");
+    await expectCliToDetectAuditTampering(accessRequestBody.requestId);
     await clinicianContext.close();
     await patientContext.close();
   });
 });
+
+async function expectCliToDetectAuditTampering(requestId: string): Promise<void> {
+  const connection = await createDatabaseClient();
+  let auditEventId: string | undefined;
+  let originalAction: string | undefined;
+  let tamperingCommitted = false;
+
+  try {
+    await connection.connect();
+    const event = await connection.query<{
+      id: string;
+      action: string;
+    }>(
+      `SELECT id, action
+       FROM audit_events
+       WHERE resource_type = 'access_request'
+         AND resource_id = $1
+         AND action = 'DOCUMENT_TIMELINE_VIEWED'
+       ORDER BY event_index DESC
+       LIMIT 1`,
+      [requestId]
+    );
+    auditEventId = event.rows[0]?.id;
+    originalAction = event.rows[0]?.action;
+    if (!auditEventId || !originalAction) {
+      throw new Error("The consent-scoped timeline audit event is missing.");
+    }
+
+    await connection.query("BEGIN");
+    await connection.query("ALTER TABLE audit_events DISABLE TRIGGER USER");
+    await connection.query(
+      "UPDATE audit_events SET action = 'AUDIT_CHAIN_TAMPER_TEST' WHERE id = $1",
+      [auditEventId]
+    );
+    await connection.query("ALTER TABLE audit_events ENABLE TRIGGER USER");
+    await connection.query("COMMIT");
+    tamperingCommitted = true;
+
+    const verifier = spawnSync(
+      process.platform === "win32" ? "pnpm.cmd" : "pnpm",
+      ["--filter", "@mediqr/api", "audit:verify"],
+      {
+        cwd: resolve(process.cwd(), "../.."),
+        encoding: "utf8",
+        shell: process.platform === "win32",
+        timeout: 60_000,
+      }
+    );
+    const verifierOutput = `${verifier.stdout ?? ""}${verifier.stderr ?? ""}`;
+    if (
+      verifier.error ||
+      verifier.status === 0 ||
+      !verifierOutput.includes("Audit chain verification failed")
+    ) {
+      throw new Error("The audit verifier CLI did not detect the tampered row.");
+    }
+  } finally {
+    if (tamperingCommitted && auditEventId && originalAction) {
+      await connection.query("BEGIN");
+      await connection.query("ALTER TABLE audit_events DISABLE TRIGGER USER");
+      await connection.query(
+        "UPDATE audit_events SET action = $1 WHERE id = $2",
+        [originalAction, auditEventId]
+      );
+      await connection.query("ALTER TABLE audit_events ENABLE TRIGGER USER");
+      await connection.query("COMMIT");
+    }
+    await connection.end();
+  }
+}
 
 async function getKeycloakAdminToken(): Promise<string> {
   const response = await fetch(

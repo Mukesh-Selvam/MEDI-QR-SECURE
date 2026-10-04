@@ -244,6 +244,12 @@ export default function RequestAccessPage() {
                 </form>
               </>
             )}
+            <Link
+              href={`/clinician/records/${requestId}`}
+              className="mt-4 inline-flex min-h-11 items-center rounded-lg border border-[#BBA5B4] px-4 text-sm font-semibold text-[#4A1D3F] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E8735A] dark:text-[#F8EAF2]"
+            >
+              Open clinician records console
+            </Link>
           </div>
         ) : isVerifiedClinician && resolutionId ? (
           <form onSubmit={(event) => void createRequest(event)} className="mt-6 space-y-5">

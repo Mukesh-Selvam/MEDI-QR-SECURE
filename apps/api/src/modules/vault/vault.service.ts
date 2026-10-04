@@ -24,13 +24,15 @@ import {
 import { Queue } from "bullmq";
 import { db } from "../../database/index.js";
 import {
+  accessRequests,
+  consents,
   documents,
   documentCryptoKeys,
   documentVersions,
   fhirDocumentReferences,
   patients,
 } from "../../database/schema.js";
-import { eq, and, isNull, desc } from "drizzle-orm";
+import { eq, and, isNull, desc, gt } from "drizzle-orm";
 import { VaultCryptoService } from "./crypto/vault-crypto.service.js";
 import {
   hasActiveFacilityPatientRelationship,
@@ -100,6 +102,28 @@ export interface TimelineDocument {
 export interface TimelineGroup {
   type: DocumentType;
   documents: TimelineDocument[];
+}
+
+function groupTimelineDocuments(
+  documentsToGroup: TimelineDocument[]
+): TimelineGroup[] {
+  const grouped = new Map<DocumentType, TimelineDocument[]>();
+  const typeOrder: DocumentType[] = [
+    "lab",
+    "scan",
+    "prescription",
+    "vaccination",
+    "discharge",
+  ];
+
+  for (const document of documentsToGroup) {
+    if (!grouped.has(document.documentType)) grouped.set(document.documentType, []);
+    grouped.get(document.documentType)!.push(document);
+  }
+
+  return typeOrder
+    .filter((type) => grouped.has(type))
+    .map((type) => ({ type, documents: grouped.get(type)! }));
 }
 
 @Injectable()
@@ -485,16 +509,9 @@ export class VaultService {
       )
       .orderBy(desc(documents.documentDate), desc(documents.createdAt));
 
-    const grouped = new Map<DocumentType, TimelineDocument[]>();
-    const typeOrder: DocumentType[] = ["lab", "scan", "prescription", "vaccination", "discharge"];
-
-    for (const row of rows) {
-      const type = row.documentType as DocumentType;
-      if (!grouped.has(type)) grouped.set(type, []);
-
-      grouped.get(type)!.push({
+    return groupTimelineDocuments(rows.map((row) => ({
         id: row.id,
-        documentType: type,
+        documentType: row.documentType as DocumentType,
         uploadSource: row.uploadSource as UploadSource,
         sourceLabel: row.uploadSource === "facility-verified" ? "verified-source" : "patient-uploaded",
         mimeType: row.mimeType,
@@ -503,12 +520,116 @@ export class VaultService {
         scanStatus: row.scanStatus,
         documentDate: row.documentDate,
         createdAt: row.createdAt,
-      });
-    }
+      })));
+  }
 
-    return typeOrder
-      .filter((t) => grouped.has(t))
-      .map((t) => ({ type: t, documents: grouped.get(t)! }));
+  async getRequestTimeline(
+    requestId: string,
+    clinicianUserId: string,
+    clinicianRole: string,
+    ipHash: string
+  ): Promise<{
+    groups: TimelineGroup[];
+    consent: { scope: string[]; purpose: string; expiresAt: string };
+  }> {
+    if (clinicianRole !== "clinician") {
+      throw new ForbiddenException("Clinician access is required");
+    }
+    const result = await db.transaction(async (transaction) => {
+      const [context] = await transaction
+        .select({
+          patientId: accessRequests.patientId,
+          scope: consents.scope,
+          purpose: consents.purpose,
+          expiresAt: consents.expiresAt,
+        })
+        .from(accessRequests)
+        .innerJoin(consents, eq(consents.accessRequestId, accessRequests.id))
+        .where(
+          and(
+            eq(accessRequests.id, requestId),
+            eq(accessRequests.clinicianUserId, clinicianUserId),
+            eq(accessRequests.status, "approved"),
+            eq(consents.granteeUserId, clinicianUserId),
+            eq(consents.status, "active"),
+            gt(consents.expiresAt, new Date())
+          )
+        )
+        .limit(1)
+        .for("share");
+      if (!context) {
+        throw new ForbiddenException("Record access is not active");
+      }
+
+      await this.audit.logInTransaction(
+        {
+          actorId: clinicianUserId,
+          actorRole: clinicianRole,
+          action: "DOCUMENT_TIMELINE_VIEWED",
+          resourceType: "access_request",
+          resourceId: requestId,
+          outcome: "SUCCESS",
+          ipHash,
+        },
+        transaction
+      );
+
+      const rows = await transaction
+        .select({
+          id: documents.id,
+          documentType: documents.documentType,
+          uploadSource: documents.uploadSource,
+          mimeType: documents.mimeType,
+          fileSizeBytes: documents.fileSizeBytes,
+          status: documents.status,
+          scanStatus: documents.scanStatus,
+          documentDate: documents.documentDate,
+          createdAt: documents.createdAt,
+        })
+        .from(documents)
+        .where(
+          and(
+            eq(documents.patientId, context.patientId),
+            eq(documents.status, "ready"),
+            isNull(documents.deletedAt)
+          )
+        )
+        .orderBy(desc(documents.documentDate), desc(documents.createdAt));
+      return { context, rows };
+    });
+
+    const { context, rows } = result;
+
+    const scopedDocuments = rows
+      .filter(
+        (row) =>
+          context.scope.includes("timeline") ||
+          context.scope.includes(`document:${row.documentType}`)
+      )
+      .map((row): TimelineDocument => ({
+        id: row.id,
+        documentType: row.documentType as DocumentType,
+        uploadSource: row.uploadSource as UploadSource,
+        sourceLabel:
+          row.uploadSource === "facility-verified"
+            ? "verified-source"
+            : "patient-uploaded",
+        mimeType: row.mimeType,
+        fileSizeBytes: row.fileSizeBytes,
+        status: row.status,
+        scanStatus: row.scanStatus,
+        documentDate: row.documentDate,
+        createdAt: row.createdAt,
+      }));
+
+    return {
+      groups: groupTimelineDocuments(scopedDocuments),
+      consent: {
+        scope: context.scope,
+        purpose: context.purpose,
+        expiresAt: context.expiresAt.toISOString(),
+      },
+    };
   }
 
   /** Get a single document record (for policy checks — returns minimal info) */

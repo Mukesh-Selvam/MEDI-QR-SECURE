@@ -123,6 +123,24 @@ export class VaultController {
     return this.vaultService.getTimeline(patientId);
   }
 
+  @Get("requests/:requestId/timeline")
+  @RequirePolicy({ resource: "document", action: "read" })
+  async getRequestTimeline(
+    @Param("requestId", ParseUUIDPipe) requestId: string,
+    @Req() req: FastifyRequest,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    const ipHash = createHash("sha256")
+      .update(req.ip ?? "0.0.0.0")
+      .digest("hex");
+    return this.vaultService.getRequestTimeline(
+      requestId,
+      user.id,
+      user.role,
+      ipHash
+    );
+  }
+
   /**
    * GET /api/v1/vault/:id/view-url
    * Returns a 5-minute presigned GET URL for viewing an encrypted document.
