@@ -99,7 +99,7 @@ async function seedVault() {
 
     uploaderId = seedUser.id;
     patientId = seedPatient.id;
-    console.info(`[VaultSeed] Created fake seed patient ${patientId}`);
+    console.info("[VaultSeed] Created fake seed patient.");
   } else {
     // Use the first existing user
     const [firstUser] = existingUsers;
@@ -158,7 +158,7 @@ async function seedVault() {
       resource,
     });
 
-    console.info(`[VaultSeed] Created FAKE ${sample.type} document: ${doc.id}`);
+    console.info(`[VaultSeed] Created FAKE ${sample.type} document.`);
   }
 
   console.info("[VaultSeed] Seed complete. All documents are clearly fake and labelled.");

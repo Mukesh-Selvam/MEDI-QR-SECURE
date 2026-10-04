@@ -9,17 +9,22 @@
  * 5. LocalKmsAdapter refuses to init in production.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
-import { VaultCryptoService, KMS_ADAPTER_TOKEN } from "../crypto/vault-crypto.service.js";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { VaultCryptoService } from "../crypto/vault-crypto.service.js";
 import { LocalKmsAdapter } from "../kms/local-kms.adapter.js";
+
+const testEnv = vi.hoisted(() => ({
+  NODE_ENV: "test" as string,
+  KMS_MASTER_KEY: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+}));
+vi.mock("../../../config/env.js", () => ({ env: testEnv }));
+
+import { env } from "../../../config/env.js";
 
 // --- Helper to build the service under test ---
 function buildCryptoService(): VaultCryptoService {
   const kms = new LocalKmsAdapter();
-  // Patch env for local test
-  process.env["KMS_MASTER_KEY"] =
-    "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
-  process.env["NODE_ENV"] = "development";
+  env.NODE_ENV = "development";
   kms.onModuleInit();
   const svc = new VaultCryptoService(kms);
   return svc;
@@ -129,19 +134,14 @@ describe("LocalKmsAdapter", () => {
     expect(unwrapped.equals(dek)).toBe(true);
   });
 
-  it("refuses to initialize in production", async () => {
-    // LocalKmsAdapter checks env.NODE_ENV === 'production'.
-    // Since env is a singleton, we import and temporarily patch it.
-    const { env } = await import("../../../config/env.js");
+  it("refuses to initialize in production", () => {
     const original = env.NODE_ENV;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (env as any).NODE_ENV = "production";
+    env.NODE_ENV = "production";
     try {
       const adapter = new LocalKmsAdapter();
       expect(() => adapter.onModuleInit()).toThrow(/LocalKmsAdapter is a dev-only KMS adapter/);
     } finally {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (env as any).NODE_ENV = original;
+      env.NODE_ENV = original;
     }
   });
 });

@@ -24,7 +24,6 @@ import { DocumentScanWorker } from "./scanner/document-scan.worker.js";
 import { FhirDocumentMapper } from "./fhir/fhir-document.mapper.js";
 import { VaultService } from "./vault.service.js";
 import { VaultController } from "./vault.controller.js";
-import { env } from "../../config/env.js";
 
 @Module({
   imports: [AuditModule],
@@ -47,4 +46,3 @@ import { env } from "../../config/env.js";
   exports: [VaultService, StorageService, VaultCryptoService],
 })
 export class VaultModule {}
-

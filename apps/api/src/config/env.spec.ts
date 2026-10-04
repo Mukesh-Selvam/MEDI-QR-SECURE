@@ -43,8 +43,6 @@ const EnvSchema = z.object({
   CLAMAV_SCAN_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
   KEYCLOAK_BASE_URL: z.string().url("KEYCLOAK_BASE_URL must be a valid URL"),
   KEYCLOAK_REALM: z.string().min(1, "KEYCLOAK_REALM must be set"),
-  KEYCLOAK_CLIENT_ID: z.string().min(1, "KEYCLOAK_CLIENT_ID must be set"),
-  KEYCLOAK_CLIENT_SECRET: z.string().min(1, "KEYCLOAK_CLIENT_SECRET must be set"),
   MASTER_ENCRYPTION_KEY: z.string().regex(
     /^[0-9a-fA-F]{64}$/,
     "MASTER_ENCRYPTION_KEY must be a 64-character hex string"
@@ -77,8 +75,6 @@ const VALID_ENV: EnvInput = {
   CLAMAV_HOST: "localhost",
   KEYCLOAK_BASE_URL: "http://localhost:8080",
   KEYCLOAK_REALM: "mediqr",
-  KEYCLOAK_CLIENT_ID: "mediqr-api",
-  KEYCLOAK_CLIENT_SECRET: "supersecretclientsecret",
   MASTER_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   JWT_ACCESS_SECRET: "jwt_access_secret_must_be_32_chars_min",
   JWT_REFRESH_SECRET: "jwt_refresh_secret_must_be_32_chars_",
@@ -90,7 +86,6 @@ const VALID_ENV: EnvInput = {
 const SECRET_KEYS = new Set([
   "DB_PASSWORD",
   "STORAGE_SECRET_KEY",
-  "KEYCLOAK_CLIENT_SECRET",
   "MASTER_ENCRYPTION_KEY",
   "JWT_ACCESS_SECRET",
   "JWT_REFRESH_SECRET",
@@ -148,8 +143,6 @@ describe("Environment Schema — missing required variables", () => {
     "CLAMAV_HOST",
     "KEYCLOAK_BASE_URL",
     "KEYCLOAK_REALM",
-    "KEYCLOAK_CLIENT_ID",
-    "KEYCLOAK_CLIENT_SECRET",
     "MASTER_ENCRYPTION_KEY",
     "JWT_ACCESS_SECRET",
     "JWT_REFRESH_SECRET",

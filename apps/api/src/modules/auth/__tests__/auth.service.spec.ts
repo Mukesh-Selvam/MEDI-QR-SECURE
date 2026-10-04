@@ -11,13 +11,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { BadRequestException, HttpException } from "@nestjs/common";
+import { BadRequestException, HttpException, Logger } from "@nestjs/common";
 import { createHash } from "crypto";
 
 // ---------------------------------------------------------------------------
 // Mock env BEFORE importing AuthService
 // ---------------------------------------------------------------------------
-vi.mock("../../config/env.js", () => ({
+vi.mock("../../../config/env.js", () => ({
   env: {
     REDIS_HOST: "localhost",
     REDIS_PORT: 6379,
@@ -52,6 +52,7 @@ vi.mock("ioredis", () => {
     }),
     expire: vi.fn(async () => 1),
     ttl: vi.fn(async () => -2),
+    on: vi.fn().mockReturnThis(),
   }));
   return { Redis: MockRedis };
 });
@@ -61,7 +62,7 @@ vi.mock("ioredis", () => {
 // ---------------------------------------------------------------------------
 let mockFindFirstResult: unknown = null;
 
-vi.mock("../../database/index.js", () => ({
+vi.mock("../../../database/index.js", () => ({
   db: {
     query: {
       users: {
@@ -90,7 +91,7 @@ vi.mock("../../database/index.js", () => ({
   },
 }));
 
-vi.mock("../../database/schema.js", () => ({
+vi.mock("../../../database/schema.js", () => ({
   users: { phone: "phone", id: "id" },
   sessions: { userId: "userId", refreshTokenHash: "refreshTokenHash", revokedAt: "revokedAt" },
 }));
@@ -137,6 +138,7 @@ function makeFastifyReply(): FastifyReply {
 const VALID_PHONE = "+919876543210";
 const IP_HASH = "hashed-ip";
 const UA = "Vitest/1.0";
+const REQUEST_ID = "request-123";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -155,23 +157,23 @@ describe("AuthService — OTP flow", () => {
   });
 
   it("sendOtp: valid Indian mobile number dispatches OTP", async () => {
-    const result = await service.sendOtp(VALID_PHONE, IP_HASH);
+    const result = await service.sendOtp(VALID_PHONE, IP_HASH, REQUEST_ID);
     expect(result.message).toContain("OTP sent");
     expect(sms.sendOtp).toHaveBeenCalledOnce();
     expect(sms.lastOtp).toMatch(/^\d{6}$/);
   });
 
   it("sendOtp: invalid phone format throws BadRequestException", async () => {
-    await expect(service.sendOtp("9876543210", IP_HASH)).rejects.toThrow(
+    await expect(service.sendOtp("9876543210", IP_HASH, REQUEST_ID)).rejects.toThrow(
       BadRequestException
     );
-    await expect(service.sendOtp("+1-800-555-0100", IP_HASH)).rejects.toThrow(
+    await expect(service.sendOtp("+1-800-555-0100", IP_HASH, REQUEST_ID)).rejects.toThrow(
       BadRequestException
     );
   });
 
   it("sendOtp: stores only the HMAC — not the raw OTP — in Redis", async () => {
-    await service.sendOtp(VALID_PHONE, IP_HASH);
+    await service.sendOtp(VALID_PHONE, IP_HASH, REQUEST_ID);
     const phoneHash = createHash("sha256").update(VALID_PHONE).digest("hex");
     const stored = redisStore.get(`otp:hmac:${phoneHash}`);
     expect(stored).toBeTruthy();
@@ -182,8 +184,22 @@ describe("AuthService — OTP flow", () => {
     expect(stored).not.toBe(sms.lastOtp);
   });
 
+  it("sendOtp: logs the request ID without logging a phone number or blind index", async () => {
+    const logSpy = vi.spyOn(Logger.prototype, "log");
+    const phoneHash = createHash("sha256").update(VALID_PHONE).digest("hex");
+
+    try {
+      await service.sendOtp(VALID_PHONE, IP_HASH, REQUEST_ID);
+      expect(logSpy).toHaveBeenCalledWith(`OTP dispatched for request ${REQUEST_ID}`);
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining(VALID_PHONE));
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining(phoneHash));
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it("verifyOtp: wrong OTP throws BadRequestException", async () => {
-    await service.sendOtp(VALID_PHONE, IP_HASH);
+    await service.sendOtp(VALID_PHONE, IP_HASH, REQUEST_ID);
     const reply = makeFastifyReply();
     await expect(
       service.verifyOtp(VALID_PHONE, "000000", IP_HASH, UA, reply)
@@ -191,7 +207,7 @@ describe("AuthService — OTP flow", () => {
   });
 
   it("verifyOtp: valid OTP succeeds and sets 3 cookies", async () => {
-    await service.sendOtp(VALID_PHONE, IP_HASH);
+    await service.sendOtp(VALID_PHONE, IP_HASH, REQUEST_ID);
     const correctOtp = sms.lastOtp!;
     const reply = makeFastifyReply();
     const result = await service.verifyOtp(
@@ -209,7 +225,7 @@ describe("AuthService — OTP flow", () => {
   });
 
   it("verifyOtp: OTP is single-use — second attempt throws", async () => {
-    await service.sendOtp(VALID_PHONE, IP_HASH);
+    await service.sendOtp(VALID_PHONE, IP_HASH, REQUEST_ID);
     const correctOtp = sms.lastOtp!;
     await service.verifyOtp(VALID_PHONE, correctOtp, IP_HASH, UA, makeFastifyReply());
 
@@ -231,13 +247,13 @@ describe("AuthService — OTP flow", () => {
     // Simulate 3 prior sends
     redisStore.set(`otp:send:${phoneHash}`, "3");
     // 4th send should be rate-limited
-    await expect(service.sendOtp(VALID_PHONE, "diff-ip-hash")).rejects.toThrow(
+    await expect(service.sendOtp(VALID_PHONE, "diff-ip-hash", REQUEST_ID)).rejects.toThrow(
       HttpException
     );
   });
 
   it("verifyOtp: exceeding 5 attempts invalidates the code and triggers lockout (Condition 1)", async () => {
-    await service.sendOtp(VALID_PHONE, IP_HASH);
+    await service.sendOtp(VALID_PHONE, IP_HASH, REQUEST_ID);
     const phoneHash = createHash("sha256").update(VALID_PHONE).digest("hex");
 
     for (let i = 1; i <= 4; i++) {
@@ -256,13 +272,13 @@ describe("AuthService — OTP flow", () => {
   });
 
   it("sendOtp: issuing a new code invalidates previous code (Condition 1)", async () => {
-    await service.sendOtp(VALID_PHONE, IP_HASH);
+    await service.sendOtp(VALID_PHONE, IP_HASH, REQUEST_ID);
     const firstOtp = sms.lastOtp!;
     const phoneHash = createHash("sha256").update(VALID_PHONE).digest("hex");
     const firstHmac = redisStore.get(`otp:hmac:${phoneHash}`);
 
     // Re-issue
-    await service.sendOtp(VALID_PHONE, IP_HASH);
+    await service.sendOtp(VALID_PHONE, IP_HASH, REQUEST_ID);
     const _secondOtp = sms.lastOtp!;
     const secondHmac = redisStore.get(`otp:hmac:${phoneHash}`);
 

@@ -5,7 +5,9 @@ export default defineConfig({
     globals: false,
     environment: "node",
     include: ["src/**/*.spec.ts", "src/**/*.test.ts"],
-    testTimeout: 15000, // real network I/O anti-stub tests need more time
+    exclude: ["src/**/*.int.spec.ts"],
+    setupFiles: ["src/test/setup.ts"],
+    testTimeout: 15000,
     pool: "forks", // isolate env mutations between test files
   },
 });

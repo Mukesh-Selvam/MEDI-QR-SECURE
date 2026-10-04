@@ -15,6 +15,7 @@ import {
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
 import { AppModule } from "./app.module.js";
 import { Logger } from "@nestjs/common";
+import { ApiExceptionFilter } from "./common/filters/api-exception.filter.js";
 import fastifyCookie from "@fastify/cookie";
 import fastifyMultipart from "@fastify/multipart";
 import { env } from "./config/env.js";
@@ -27,6 +28,7 @@ async function bootstrap() {
       logger: env.NODE_ENV !== "production",
     }),
   );
+  app.useGlobalFilters(new ApiExceptionFilter());
 
   // Register cookie support
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

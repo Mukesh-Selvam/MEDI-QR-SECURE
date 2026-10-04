@@ -42,6 +42,7 @@ import { FhirDocumentMapper } from "./fhir/fhir-document.mapper.js";
 import { AuditService } from "../audit/audit.service.js";
 import { SCAN_QUEUE_NAME, type ScanDocumentJob } from "./scanner/document-scan.worker.js";
 import { env } from "../../config/env.js";
+import { getRedisConnectionOptions } from "../../config/redis.config.js";
 
 export type DocumentType = "scan" | "lab" | "prescription" | "vaccination" | "discharge";
 export type UploadSource = "patient-uploaded" | "facility-verified";
@@ -112,7 +113,7 @@ export class VaultService {
     @Inject(AuditService) private readonly audit: AuditService,
   ) {
     this.scanQueue = new Queue<ScanDocumentJob>(SCAN_QUEUE_NAME, {
-      connection: { url: env.REDIS_URL ?? `redis://:${env.REDIS_PASSWORD}@${env.REDIS_HOST}:${env.REDIS_PORT}/0` },
+      connection: getRedisConnectionOptions(),
       defaultJobOptions: {
         attempts: 3,
         backoff: { type: "exponential", delay: 2000 },
@@ -261,7 +262,7 @@ export class VaultService {
       ipHash,
     });
 
-    this.logger.log(`[Vault] Document ${doc.id} uploaded and staged for scanning`);
+    this.logger.log("[Vault] Document uploaded and staged for scanning.");
     return { id: doc.id, status: "quarantined" };
   }
 

@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
+    "db:setup": "pnpm --filter @mediqr/api db:setup",
     "test": "turbo run test",
+    "test:int": "pnpm --filter @mediqr/api test:int",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css}\"",

@@ -59,6 +59,90 @@ jobs:
       - name: Build Monorepo (Turborepo)
         run: pnpm turbo run build
 
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      DB_HOST: 127.0.0.1
+      DB_NAME: mediqr_test
+      DB_USER: mediqr_test
+      DB_PASSWORD: integration-postgres-password
+      DB_PORT: "5432"
+      DB_SSL_ENABLED: "false"
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: integration-redis-password
+      STORAGE_ENDPOINT: 127.0.0.1
+      STORAGE_PORT: "9000"
+      STORAGE_USE_SSL: "false"
+      STORAGE_ACCESS_KEY: mediqr_test
+      STORAGE_SECRET_KEY: integration-storage-password
+      CLAMAV_HOST: 127.0.0.1
+      CLAMAV_PORT: "3310"
+      KEYCLOAK_BASE_URL: http://127.0.0.1:8080
+      KEYCLOAK_ADMIN_PASSWORD: integration-keycloak-password
+      KEYCLOAK_REALM: mediqr
+      SESSION_SECRET: integration-session-secret-at-least-32-characters
+      AUDIT_HMAC_KEY: integration-audit-key-at-least-32-characters
+      MASTER_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      KMS_MASTER_KEY: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      JWT_ACCESS_SECRET: integration-access-secret-at-least-32-characters
+      JWT_REFRESH_SECRET: integration-refresh-secret-at-least-32-characters
+      HMAC_QR_SIGNING_KEY: integration-qr-signing-key-at-least-32-characters
+      OTP_HMAC_SECRET: integration-otp-hmac-key-at-least-32-characters
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: "1025"
+      MAIL_FROM_ADDRESS: integration@mediqr.invalid
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 12.8.1
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Start integration service containers
+        run: docker compose up --wait -d postgres redis minio clamav mailpit keycloak
+
+      - name: Apply database migrations and seed fake user
+        run: pnpm db:setup
+
+      - name: Wait for Keycloak realm
+        run: |
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:8080/realms/mediqr/.well-known/openid-configuration > /dev/null; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Keycloak realm did not become ready" >&2
+          exit 1
+
+      - name: Wait for ClamAV to accept scans
+        run: |
+          for i in {1..60}; do
+            if printf 'zPING\0' | timeout 3 bash -c 'cat < /dev/tcp/127.0.0.1/3310' | grep -q PONG; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "ClamAV did not become ready" >&2
+          exit 1
+
+      - name: Run integration tests against service containers
+        run: pnpm test:int
+
   security-scans:
     name: Security Scanners (Gitleaks, Semgrep, Trivy)
     runs-on: ubuntu-latest

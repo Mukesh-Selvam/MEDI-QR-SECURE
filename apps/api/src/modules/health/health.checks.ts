@@ -13,7 +13,7 @@
 
 import net from "net";
 import { Client as PgClient } from "pg";
-import { Redis } from "ioredis";
+import { createRedisClient } from "../../config/redis.config.js";
 import { env } from "../../config/env.js";
 import {
   CheckResult,
@@ -111,10 +111,7 @@ export async function checkDatabase(): Promise<CheckResult> {
 // ---------------------------------------------------------------------------
 export async function checkRedis(): Promise<CheckResult> {
   const start = Date.now();
-  const client = new Redis({
-    host: env.REDIS_HOST,
-    port: env.REDIS_PORT,
-    password: env.REDIS_PASSWORD || undefined,
+  const client = createRedisClient({
     connectTimeout: HEALTH_CHECK_TIMEOUT_MS,
     commandTimeout: HEALTH_CHECK_TIMEOUT_MS,
     lazyConnect: true,

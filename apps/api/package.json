@@ -7,9 +7,13 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
+    "db:migrate": "tsx src/database/migrate.ts",
+    "db:seed": "tsx src/database/seeds/dev-seed.ts",
+    "db:setup": "pnpm db:migrate && pnpm db:seed",
     "lint": "eslint \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:int": "vitest run --config vitest.int.config.ts",
     "clean": "rimraf dist"
   },
   "dependencies": {

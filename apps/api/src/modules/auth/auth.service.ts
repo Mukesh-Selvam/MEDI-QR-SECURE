@@ -16,11 +16,13 @@ import {
   Inject,
   Injectable,
   Logger,
+  OnModuleDestroy,
   UnauthorizedException,
 } from "@nestjs/common";
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from "crypto";
-import { Redis } from "ioredis";
 import type { FastifyReply } from "fastify";
+import type { Redis } from "ioredis";
+import { createRedisClient } from "../../config/redis.config.js";
 import { db } from "../../database/index.js";
 import { users, sessions } from "../../database/schema.js";
 import { eq, and, isNull, gt } from "drizzle-orm";
@@ -61,7 +63,7 @@ function phoneIsValid(phone: string): boolean {
 }
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleDestroy {
   private readonly logger = new Logger(AuthService.name);
   private readonly redis: Redis;
 
@@ -69,11 +71,11 @@ export class AuthService {
     @Inject(SMS_PROVIDER) private readonly smsProvider: SmsProvider,
     @Inject(AuditService) private readonly auditService: AuditService
   ) {
-    this.redis = new Redis({
-      host: env.REDIS_HOST,
-      port: env.REDIS_PORT,
-      password: env.REDIS_PASSWORD,
-    });
+    this.redis = createRedisClient();
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.redis.quit();
   }
 
   // ---------------------------------------------------------------------------
@@ -118,7 +120,11 @@ export class AuthService {
   // ---------------------------------------------------------------------------
   // OTP: Send (Condition 1, 2, 3)
   // ---------------------------------------------------------------------------
-  async sendOtp(phone: string, ipHash: string): Promise<{ message: string }> {
+  async sendOtp(
+    phone: string,
+    ipHash: string,
+    requestId: string
+  ): Promise<{ message: string }> {
     if (!phoneIsValid(phone)) {
       throw new BadRequestException(
         "Phone must be in +91XXXXXXXXXX format (Indian mobile number)"
@@ -175,7 +181,7 @@ export class AuthService {
 
     // 6. Dispatch via SMS provider
     await this.smsProvider.sendOtp(phone, otp);
-    this.logger.log(`OTP dispatched for blind-index ${sha256(phone).slice(0, 16)}...`);
+    this.logger.log(`OTP dispatched for request ${requestId}`);
 
     // 7. Audit log with zero plaintext phone/OTP
     await this.auditService.log({
@@ -274,7 +280,7 @@ export class AuthService {
         .values({ phone, role: "patient", status: "active" })
         .returning();
       resolvedUser = newUser;
-      this.logger.log(`New patient provisioned: ${resolvedUser.id}`);
+      this.logger.log("New patient provisioned.");
     }
 
     // 7. Issue refresh token + session

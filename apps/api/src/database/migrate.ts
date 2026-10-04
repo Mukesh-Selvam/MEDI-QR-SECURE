@@ -8,13 +8,16 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { db, pool } from "./index.js";
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
+import { Logger } from "@nestjs/common";
+
+const logger = new Logger("Migrations");
 
 export async function runMigrations() {
   const currentDir = dirname(fileURLToPath(import.meta.url));
   const migrationsFolder = resolve(currentDir, "migrations");
-  console.log(`[Migrations] Applying migrations from ${migrationsFolder}...`);
+  logger.log("Applying pending database migrations...");
   await migrate(db, { migrationsFolder });
-  console.log("[Migrations] Migrations applied successfully.");
+  logger.log("Migrations applied successfully.");
 }
 
 // Allow direct execution via tsx src/database/migrate.ts
@@ -26,7 +29,7 @@ if (isMain) {
       process.exit(0);
     })
     .catch(async (err) => {
-      console.error("[Migrations] Migration failed:", err);
+      logger.error("Migration failed.", err instanceof Error ? err.stack : undefined);
       await pool.end();
       process.exit(1);
     });

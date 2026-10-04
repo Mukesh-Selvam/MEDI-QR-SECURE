@@ -149,7 +149,7 @@ export class VaultController {
       url: result.url,
       expiresAt: result.expiresAt.toISOString(),
       sourceLabel: result.sourceLabel,
-      expiresInSeconds: 300,
+      expiresInSeconds: result.expiresInSeconds,
     };
   }
 
@@ -215,4 +215,3 @@ export class VaultController {
     return buffer;
   }
 }
-

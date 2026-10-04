@@ -21,6 +21,9 @@ import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
 import { existsSync } from "fs";
 import { z } from "zod";
+import { Logger } from "@nestjs/common";
+
+const logger = new Logger("Config");
 
 // ---------------------------------------------------------------------------
 // Step 1: Load .env from the monorepo root (CWD-independent)
@@ -52,13 +55,13 @@ if (process.env.NODE_ENV !== "production") {
       const result = dotenvConfig({ path: envPath, override: false });
       if (result.error) {
         // Non-fatal: file exists but could not be parsed
-        console.warn(`[Config] Warning: failed to parse ${envPath}:`, result.error.message);
+        logger.warn(`Failed to parse the repository environment file: ${result.error.message}`);
       } else {
-        console.log(`[Config] Loaded environment from ${envPath}`);
+        logger.log("Loaded environment from the repository environment file.");
       }
     } else {
-      console.warn(
-        `[Config] No .env file found at ${envPath}. ` +
+      logger.warn(
+        `No repository .env file found. ` +
         `Copy .env.example to .env and fill in dev values.`
       );
     }
@@ -72,9 +75,7 @@ const SECRET_KEYS = new Set([
   "DB_PASSWORD",
   "REDIS_PASSWORD",
   "STORAGE_SECRET_KEY",
-  "KEYCLOAK_CLIENT_SECRET",
   "KEYCLOAK_ADMIN_PASSWORD",
-  "KEYCLOAK_API_CLIENT_SECRET",
   "MASTER_ENCRYPTION_KEY",
   "KMS_MASTER_KEY",
   "JWT_ACCESS_SECRET",
@@ -85,7 +86,6 @@ const SECRET_KEYS = new Set([
   "OTP_HMAC_SECRET",
   "SMTP_PASSWORD",
   "DATABASE_URL",
-  "REDIS_URL",
 ]);
 
 function formatEnvErrors(issues: z.ZodIssue[]): string {
@@ -126,7 +126,6 @@ const EnvSchema = z.object({
   REDIS_HOST: z.string().min(1, "REDIS_HOST must be set"),
   REDIS_PORT: z.coerce.number().int().positive().default(6379),
   REDIS_PASSWORD: z.string().optional(),
-  REDIS_URL: z.string().url().optional(), // Convenience URL for BullMQ — derived from REDIS_HOST/PORT/PASSWORD if not set
 
   // MinIO / Object Storage
   STORAGE_ENDPOINT: z.string().min(1, "STORAGE_ENDPOINT must be set"),
@@ -152,11 +151,6 @@ const EnvSchema = z.object({
   /** Alias used in guards/services */
   KEYCLOAK_URL: z.string().url().optional(),
   KEYCLOAK_REALM: z.string().min(1, "KEYCLOAK_REALM must be set"),
-  KEYCLOAK_CLIENT_ID: z.string().min(1, "KEYCLOAK_CLIENT_ID must be set"),
-  KEYCLOAK_CLIENT_SECRET: z.string().min(1, "KEYCLOAK_CLIENT_SECRET must be set"),
-  /** The confidential API service-account client */
-  KEYCLOAK_API_CLIENT_ID: z.string().default("mediqr-api"),
-  KEYCLOAK_API_CLIENT_SECRET: z.string().min(1, "KEYCLOAK_API_CLIENT_SECRET must be set"),
 
   // Cerbos PDP
   CERBOS_HOST: z.string().min(1).default("localhost"),
@@ -221,7 +215,7 @@ function validateEnv(): Env {
       `Fix: copy .env.example to .env at the monorepo root and fill in values.\n` +
       `     Never commit secret values. Use a secrets manager in production.\n`;
 
-    console.error(message);
+    logger.error(message);
     process.exit(1);
   }
 
@@ -235,4 +229,3 @@ function validateEnv(): Env {
 
 /** Validated, typed environment. Import this instead of reading process.env directly. */
 export const env = validateEnv();
-

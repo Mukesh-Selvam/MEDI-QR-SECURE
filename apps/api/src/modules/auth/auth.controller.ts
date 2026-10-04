@@ -52,7 +52,7 @@ export class AuthController {
     @Req() req: FastifyRequest
   ): Promise<{ message: string }> {
     const ip = req.ip ?? "unknown";
-    return this.authService.sendOtp(body.phone, hashIp(ip));
+    return this.authService.sendOtp(body.phone, hashIp(ip), req.id);
   }
 
   @PublicRoute()

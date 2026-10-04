@@ -11,7 +11,16 @@
  * 3. Scan timeout rejection → emulated by overriding timeout to 1ms.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+vi.mock("../../../config/env.js", () => ({
+  env: {
+    NODE_ENV: "test",
+    CLAMAV_HOST: "127.0.0.1",
+    CLAMAV_PORT: 3310,
+    CLAMAV_SCAN_TIMEOUT_MS: 15000,
+  },
+}));
+
 import { ClamAvScannerService } from "../scanner/clamav-scanner.service.js";
 
 // EICAR standard antivirus test file signature
@@ -30,9 +39,6 @@ describe("ClamAvScannerService (integration — requires mediqr-clamav running)"
   let scanner: ClamAvScannerService;
 
   beforeEach(() => {
-    process.env["CLAMAV_HOST"] = "localhost";
-    process.env["CLAMAV_PORT"] = "3310";
-    process.env["CLAMAV_SCAN_TIMEOUT_MS"] = "15000";
     scanner = new ClamAvScannerService();
   });
 
