@@ -15,6 +15,7 @@ import { db } from "../../database/index.js";
 import {
   accessRequests,
   clinicians,
+  consents,
   guardianships,
   patients,
 } from "../../database/schema.js";
@@ -32,6 +33,9 @@ const OTP_ISSUE_LIMIT_PER_HOUR = 5;
 const OTP_FAILURE_LIMIT = 5;
 const approvalOtpSchema = z.object({
   codeHash: z.string().regex(/^[a-f0-9]{64}$/),
+  requestId: z.string().uuid(),
+  patientId: z.string().uuid(),
+  clinicianUserId: z.string().uuid(),
   approverUserId: z.string().uuid(),
   approverRole: z.enum(["patient", "guardian"]),
 });
@@ -126,6 +130,7 @@ export class AccessRequestApprovalService {
       .select({
         id: accessRequests.id,
         patientId: accessRequests.patientId,
+        clinicianUserId: accessRequests.clinicianUserId,
         status: accessRequests.status,
       })
       .from(accessRequests)
@@ -149,6 +154,9 @@ export class AccessRequestApprovalService {
     const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
     const challenge = {
       codeHash: hashOtp(requestId, code),
+      requestId,
+      patientId: request.patientId,
+      clinicianUserId: request.clinicianUserId,
       approverUserId: user.id,
       approverRole: user.role,
     };
@@ -191,10 +199,25 @@ export class AccessRequestApprovalService {
     const stored = await this.redis.get(otpKey);
     if (!stored) throw new BadRequestException("Approval code is invalid or expired");
 
-    const parsed = approvalOtpSchema.safeParse(JSON.parse(stored) as unknown);
+    let storedValue: unknown;
+    try {
+      storedValue = JSON.parse(stored) as unknown;
+    } catch {
+      await this.redis.del(otpKey);
+      throw new BadRequestException("Approval code is invalid or expired");
+    }
+    const parsed = approvalOtpSchema.safeParse(storedValue);
     if (!parsed.success) {
       await this.redis.del(otpKey);
       throw new BadRequestException("Approval code is invalid or expired");
+    }
+    if (
+      parsed.data.requestId !== requestId ||
+      parsed.data.clinicianUserId !== clinician.id
+    ) {
+      throw new ForbiddenException(
+        "Only the clinician who requested access can confirm this code"
+      );
     }
 
     const expectedHash = Buffer.from(parsed.data.codeHash);
@@ -218,7 +241,11 @@ export class AccessRequestApprovalService {
       parsed.data.approverRole,
       "approved",
       "ACCESS_REQUEST_OTP_APPROVED",
-      ipHash
+      ipHash,
+      {
+        patientId: parsed.data.patientId,
+        clinicianUserId: parsed.data.clinicianUserId,
+      }
     );
     return { status: "approved" };
   }
@@ -229,7 +256,8 @@ export class AccessRequestApprovalService {
     approverRole: string,
     status: "approved" | "denied",
     action: "ACCESS_REQUEST_APPROVED" | "ACCESS_REQUEST_DENIED" | "ACCESS_REQUEST_OTP_APPROVED",
-    ipHash: string
+    ipHash: string,
+    expectedRequest?: { patientId: string; clinicianUserId: string }
   ): Promise<void> {
     if (approverRole !== "patient" && approverRole !== "guardian") {
       throw new ForbiddenException("Patient or guardian approval is required");
@@ -240,6 +268,9 @@ export class AccessRequestApprovalService {
         .select({
           id: accessRequests.id,
           patientId: accessRequests.patientId,
+          clinicianUserId: accessRequests.clinicianUserId,
+          purpose: accessRequests.purpose,
+          scope: accessRequests.scope,
           status: accessRequests.status,
         })
         .from(accessRequests)
@@ -248,6 +279,13 @@ export class AccessRequestApprovalService {
         .for("update");
       if (!request || request.status !== "pending") {
         throw new BadRequestException("Access request is no longer pending");
+      }
+      if (
+        expectedRequest &&
+        (request.patientId !== expectedRequest.patientId ||
+          request.clinicianUserId !== expectedRequest.clinicianUserId)
+      ) {
+        throw new ForbiddenException("Approval code does not match this request");
       }
 
       await assertApprovalAuthority(
@@ -265,6 +303,21 @@ export class AccessRequestApprovalService {
           decidedByUserId: approverUserId,
         })
         .where(eq(accessRequests.id, request.id));
+
+      if (status === "approved") {
+        const expiresAt = new Date(
+          Date.now() + env.ACCESS_CONSENT_TTL_HOURS * 60 * 60 * 1000
+        );
+        await transaction.insert(consents).values({
+          accessRequestId: request.id,
+          patientId: request.patientId,
+          granteeUserId: request.clinicianUserId,
+          purpose: request.purpose,
+          scope: request.scope,
+          status: "active",
+          expiresAt,
+        });
+      }
 
       return this.audit.logInTransaction(
         {

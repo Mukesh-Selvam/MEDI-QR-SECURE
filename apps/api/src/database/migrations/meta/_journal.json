@@ -43,6 +43,13 @@
       "when": 1791120000001,
       "tag": "0005_access_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791120000002,
+      "tag": "0006_access_consents",
+      "breakpoints": true
     }
   ]
 }

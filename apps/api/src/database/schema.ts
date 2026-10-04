@@ -102,6 +102,7 @@ export const accessRequestStatusEnum = pgEnum("access_request_status", [
   "denied",
   "expired",
   "cancelled",
+  "revoked",
 ]);
 
 export const accessPurposeEnum = pgEnum("access_purpose", [
@@ -485,6 +486,40 @@ export const accessRequests = pgTable(
   ]
 );
 
+export const consentStatusEnum = pgEnum("consent_status", [
+  "active",
+  "revoked",
+  "expired",
+]);
+
+export const consents = pgTable(
+  "consents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accessRequestId: uuid("access_request_id")
+      .notNull()
+      .unique()
+      .references(() => accessRequests.id, { onDelete: "cascade" }),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "cascade" }),
+    granteeUserId: uuid("grantee_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    scope: jsonb("scope").$type<(typeof accessScopeEnum.enumValues)[number][]>().notNull(),
+    purpose: accessPurposeEnum("purpose").notNull(),
+    status: consentStatusEnum("status").notNull().default("active"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("consents_patient_status_idx").on(table.patientId, table.status),
+    index("consents_grantee_idx").on(table.granteeUserId),
+    index("consents_expiry_idx").on(table.expiresAt),
+  ]
+);
+
 // ---------------------------------------------------------------------------
 // Type exports
 // ---------------------------------------------------------------------------
@@ -508,6 +543,8 @@ export type QrCredential = typeof qrCredentials.$inferSelect;
 export type NewQrCredential = typeof qrCredentials.$inferInsert;
 export type AccessRequest = typeof accessRequests.$inferSelect;
 export type NewAccessRequest = typeof accessRequests.$inferInsert;
+export type Consent = typeof consents.$inferSelect;
+export type NewConsent = typeof consents.$inferInsert;
 
 // Vault types
 export type Document = typeof documents.$inferSelect;

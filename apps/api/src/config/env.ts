@@ -183,6 +183,7 @@ const EnvSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(32, "JWT_REFRESH_SECRET must be at least 32 characters"),
   HMAC_QR_SIGNING_KEY: z.string().min(32, "HMAC_QR_SIGNING_KEY must be at least 32 characters"),
   OTP_HMAC_SECRET: z.string().min(32, "OTP_HMAC_SECRET must be at least 32 characters (generate with: openssl rand -hex 32)"),
+  ACCESS_CONSENT_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
 
   // Mailer
   SMTP_HOST: z.string().min(1, "SMTP_HOST must be set"),

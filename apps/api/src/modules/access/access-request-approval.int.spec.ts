@@ -7,6 +7,7 @@ import {
   accessRequests,
   auditEvents,
   clinicians,
+  consents,
   guardianships,
   patients,
   qrCredentials,
@@ -27,10 +28,12 @@ describe("Access request approval flow (integration)", () => {
   let requestId: string;
   let otherRequestId: string;
   let clinicianUserId: string;
+  let otherClinicianUserId: string;
   let patientCredentialId: string;
   let wardCredentialId: string;
   let service: AccessRequestApprovalService;
   let audit: AuditService;
+  let redisClient: ReturnType<typeof createRedisClient>;
 
   beforeAll(async () => {
     const migration = await pool.query(
@@ -132,6 +135,24 @@ describe("Access request approval flow (integration)", () => {
       isVerified: true,
     });
 
+    const [otherClinicianUser] = await db
+      .insert(users)
+      .values({
+        email: `approval-other-clinician-${suffix}@mediqr.invalid`,
+        keycloakId: `approval-other-clinician-${suffix}`,
+        role: "clinician",
+        status: "active",
+      })
+      .returning({ id: users.id });
+    otherClinicianUserId = otherClinicianUser.id;
+    await db.insert(clinicians).values({
+      userId: otherClinicianUser.id,
+      fullName: "Second Approval Clinician",
+      registrationNumber: `SECOND-${suffix}`,
+      stateMedicalCouncil: "Test State Council",
+      isVerified: true,
+    });
+
     const [primaryCredential] = await db
       .insert(qrCredentials)
       .values({
@@ -177,12 +198,14 @@ describe("Access request approval flow (integration)", () => {
     otherRequestId = otherRequest.id;
 
     audit = new AuditService();
-    service = new AccessRequestApprovalService(audit, createRedisClient());
+    redisClient = createRedisClient();
+    service = new AccessRequestApprovalService(audit, redisClient);
   });
 
   afterAll(async () => {
     const patientIds = [patientId, guardianPatientId, wardPatientId];
     await db.delete(accessRequests).where(inArray(accessRequests.patientId, patientIds));
+    await db.delete(consents).where(inArray(consents.patientId, patientIds));
     await db.delete(qrCredentials).where(inArray(qrCredentials.patientId, patientIds));
     await db.delete(guardianships).where(eq(guardianships.wardPatientId, wardPatientId));
     await db.delete(patients).where(inArray(patients.id, patientIds));
@@ -190,10 +213,13 @@ describe("Access request approval flow (integration)", () => {
     await db.delete(auditEvents).where(eq(auditEvents.actorId, guardianUserId));
     await db.delete(auditEvents).where(eq(auditEvents.actorId, clinicianUserId));
     await db.delete(clinicians).where(eq(clinicians.userId, clinicianUserId));
+    await db.delete(clinicians).where(eq(clinicians.userId, otherClinicianUserId));
     await db.delete(users).where(eq(users.id, patientUserId));
     await db.delete(users).where(eq(users.id, guardianUserId));
     await db.delete(users).where(eq(users.id, wardUserId));
     await db.delete(users).where(eq(users.id, clinicianUserId));
+    await db.delete(users).where(eq(users.id, otherClinicianUserId));
+    redisClient.disconnect();
     await pool.end();
   });
 
@@ -214,6 +240,29 @@ describe("Access request approval flow (integration)", () => {
       .where(eq(accessRequests.id, requestId));
     expect(request.status).toBe("approved");
     expect(request.decidedByUserId).toBe(patientUserId);
+
+    const [consent] = await db
+      .select()
+      .from(consents)
+      .where(eq(consents.accessRequestId, requestId));
+    expect(consent).toMatchObject({
+      patientId,
+      granteeUserId: clinicianUserId,
+      purpose: "clinical-care",
+      scope: ["timeline"],
+      status: "active",
+    });
+    expect(consent.expiresAt.getTime()).toBeGreaterThan(Date.now() + 23 * 60 * 60 * 1000);
+    expect(consent.expiresAt.getTime()).toBeLessThan(Date.now() + 25 * 60 * 60 * 1000);
+
+    await expect(
+      service.approve(requestId, patientUser, audit.hashIp("127.0.0.1"))
+    ).rejects.toThrow(/no longer pending/i);
+    const duplicateConsents = await db
+      .select()
+      .from(consents)
+      .where(eq(consents.accessRequestId, requestId));
+    expect(duplicateConsents).toHaveLength(1);
   });
 
   it("allows a verified guardian to approve a ward request and denies other children", async () => {
@@ -317,6 +366,309 @@ describe("Access request approval flow (integration)", () => {
       )
     ).resolves.toEqual({ status: "approved" });
 
+    await expect(
+      service.approveWithOtp(
+        freshRequest.id,
+        challenge.code,
+        clinicianUser,
+        audit.hashIp("127.0.0.1")
+      )
+    ).rejects.toThrow(/invalid or expired/i);
     await db.delete(accessRequests).where(eq(accessRequests.id, freshRequest.id));
+  });
+
+  it.each(["denied", "expired", "revoked"] as const)(
+    "rejects approval when the request is already %s",
+    async (status) => {
+      const [staleRequest] = await db
+        .insert(accessRequests)
+        .values({
+          patientId,
+          clinicianUserId,
+          sourceQrCredentialId: patientCredentialId,
+          purpose: "clinical-care",
+          scope: ["timeline"],
+          status,
+        })
+        .returning({ id: accessRequests.id });
+      const patientUser: AuthenticatedUser = {
+        id: patientUserId,
+        sub: `approval-patient-${suffix}`,
+        role: "patient",
+      };
+
+      await expect(
+        service.approve(staleRequest.id, patientUser, audit.hashIp("127.0.0.1"))
+      ).rejects.toThrow(/no longer pending/i);
+      expect(
+        await db
+          .select()
+          .from(consents)
+          .where(eq(consents.accessRequestId, staleRequest.id))
+      ).toHaveLength(0);
+      await db.delete(accessRequests).where(eq(accessRequests.id, staleRequest.id));
+    }
+  );
+
+  it("denies a clinician their own approval and denies a guardian with an expired relationship", async () => {
+    const clinician: AuthenticatedUser = {
+      id: clinicianUserId,
+      sub: `approval-clinician-${suffix}`,
+      role: "clinician",
+      isVerified: true,
+    };
+    await expect(
+      service.approve(requestId, clinician, audit.hashIp("127.0.0.1"))
+    ).rejects.toThrow(/patient or guardian/i);
+
+    const [unrelatedUser] = await db
+      .insert(users)
+      .values({
+        email: `approval-expired-ward-${suffix}@mediqr.invalid`,
+        role: "patient",
+        status: "active",
+      })
+      .returning({ id: users.id });
+    const [expiredWard] = await db
+      .insert(patients)
+      .values({
+        userId: unrelatedUser.id,
+        healthId: `EXPIRED-WARD-${suffix}`,
+        fullName: "Expired Ward",
+        phoneHash: `expired-ward-${suffix}`.replaceAll("-", "").padEnd(64, "0").slice(0, 64),
+        encryptedPhone: "expired-ward-test-ciphertext",
+      })
+      .returning({ id: patients.id });
+    const [expiredCredential] = await db
+      .insert(qrCredentials)
+      .values({
+        patientId: expiredWard.id,
+        tokenHash: createHash("sha256").update(`expired-ward-${suffix}`).digest("hex"),
+        status: "active",
+      })
+      .returning({ id: qrCredentials.id });
+    const [expiredRequest] = await db
+      .insert(accessRequests)
+      .values({
+        patientId: expiredWard.id,
+        clinicianUserId,
+        sourceQrCredentialId: expiredCredential.id,
+        purpose: "clinical-care",
+        scope: ["timeline"],
+      })
+      .returning({ id: accessRequests.id });
+    await db.insert(guardianships).values({
+      guardianPatientId,
+      wardPatientId: expiredWard.id,
+      relationship: "mother",
+      verificationStatus: "verified",
+      validUntil: new Date(Date.now() - 1000),
+    });
+    const guardian: AuthenticatedUser = {
+      id: guardianUserId,
+      sub: `approval-guardian-${suffix}`,
+      role: "guardian",
+    };
+
+    await expect(
+      service.approve(expiredRequest.id, guardian, audit.hashIp("127.0.0.1"))
+    ).rejects.toThrow(/not authorized/i);
+
+    await db.delete(accessRequests).where(eq(accessRequests.id, expiredRequest.id));
+    await db.delete(guardianships).where(eq(guardianships.wardPatientId, expiredWard.id));
+    await db.delete(qrCredentials).where(eq(qrCredentials.id, expiredCredential.id));
+    await db.delete(patients).where(eq(patients.id, expiredWard.id));
+    await db.delete(users).where(eq(users.id, unrelatedUser.id));
+  });
+
+  it("binds an OTP to its request, patient, and requesting clinician", async () => {
+    const patientUser: AuthenticatedUser = {
+      id: patientUserId,
+      sub: `approval-patient-${suffix}`,
+      role: "patient",
+    };
+    const [otpRequest] = await db
+      .insert(accessRequests)
+      .values({
+        patientId,
+        clinicianUserId,
+        sourceQrCredentialId: patientCredentialId,
+        purpose: "clinical-care",
+        scope: ["timeline"],
+      })
+      .returning({ id: accessRequests.id });
+    const [anotherRequest] = await db
+      .insert(accessRequests)
+      .values({
+        patientId: wardPatientId,
+        clinicianUserId: clinicianUserId,
+        sourceQrCredentialId: wardCredentialId,
+        purpose: "clinical-care",
+        scope: ["timeline"],
+      })
+      .returning({ id: accessRequests.id });
+    const challenge = await service.issueApprovalOtp(
+      otpRequest.id,
+      patientUser,
+      audit.hashIp("127.0.0.1")
+    );
+    const differentClinician: AuthenticatedUser = {
+      id: otherClinicianUserId,
+      sub: `approval-other-clinician-${suffix}`,
+      role: "clinician",
+      isVerified: true,
+    };
+    await expect(
+      service.approveWithOtp(
+        otpRequest.id,
+        challenge.code,
+        differentClinician,
+        audit.hashIp("127.0.0.1")
+      )
+    ).rejects.toThrow(/only the clinician who requested/i);
+    await expect(
+      service.approveWithOtp(
+        anotherRequest.id,
+        challenge.code,
+        {
+          id: clinicianUserId,
+          sub: `approval-clinician-${suffix}`,
+          role: "clinician",
+          isVerified: true,
+        },
+        audit.hashIp("127.0.0.1")
+      )
+    ).rejects.toThrow(/invalid or expired/i);
+
+    await db
+      .update(accessRequests)
+      .set({ patientId: wardPatientId })
+      .where(eq(accessRequests.id, otpRequest.id));
+    await expect(
+      service.approveWithOtp(
+        otpRequest.id,
+        challenge.code,
+        {
+          id: clinicianUserId,
+          sub: `approval-clinician-${suffix}`,
+          role: "clinician",
+          isVerified: true,
+        },
+        audit.hashIp("127.0.0.1")
+      )
+    ).rejects.toThrow(/does not match this request/i);
+    await db
+      .update(accessRequests)
+      .set({ patientId })
+      .where(eq(accessRequests.id, otpRequest.id));
+    await db.delete(accessRequests).where(eq(accessRequests.id, otpRequest.id));
+    await db.delete(accessRequests).where(eq(accessRequests.id, anotherRequest.id));
+  });
+
+  it("expires OTPs, locks after five wrong codes, and rate-limits issuance", async () => {
+    const patientUser: AuthenticatedUser = {
+      id: patientUserId,
+      sub: `approval-patient-${suffix}`,
+      role: "patient",
+    };
+    const [expiringRequest] = await db
+      .insert(accessRequests)
+      .values({
+        patientId,
+        clinicianUserId,
+        sourceQrCredentialId: patientCredentialId,
+        purpose: "clinical-care",
+        scope: ["timeline"],
+      })
+      .returning({ id: accessRequests.id });
+    const expiredCode = await service.issueApprovalOtp(
+      expiringRequest.id,
+      patientUser,
+      audit.hashIp("127.0.0.1")
+    );
+    await redisClient.expire(`access:otp:challenge:${expiringRequest.id}`, 1);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await expect(
+      service.approveWithOtp(
+        expiringRequest.id,
+        expiredCode.code,
+        {
+          id: clinicianUserId,
+          sub: `approval-clinician-${suffix}`,
+          role: "clinician",
+          isVerified: true,
+        },
+        audit.hashIp("127.0.0.1")
+      )
+    ).rejects.toThrow(/invalid or expired/i);
+
+    const [lockedRequest] = await db
+      .insert(accessRequests)
+      .values({
+        patientId,
+        clinicianUserId,
+        sourceQrCredentialId: patientCredentialId,
+        purpose: "clinical-care",
+        scope: ["timeline"],
+      })
+      .returning({ id: accessRequests.id });
+    const lockedCode = await service.issueApprovalOtp(
+      lockedRequest.id,
+      patientUser,
+      audit.hashIp("127.0.0.1")
+    );
+    const clinician: AuthenticatedUser = {
+      id: clinicianUserId,
+      sub: `approval-clinician-${suffix}`,
+      role: "clinician",
+      isVerified: true,
+    };
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await expect(
+        service.approveWithOtp(
+          lockedRequest.id,
+          "000000",
+          clinician,
+          audit.hashIp("127.0.0.1")
+        )
+      ).rejects.toThrow(/invalid or expired/i);
+    }
+    await expect(
+      service.approveWithOtp(
+        lockedRequest.id,
+        lockedCode.code,
+        clinician,
+        audit.hashIp("127.0.0.1")
+      )
+    ).rejects.toThrow(/invalid or expired/i);
+
+    const [limitedRequest] = await db
+      .insert(accessRequests)
+      .values({
+        patientId,
+        clinicianUserId,
+        sourceQrCredentialId: patientCredentialId,
+        purpose: "clinical-care",
+        scope: ["timeline"],
+      })
+      .returning({ id: accessRequests.id });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await service.issueApprovalOtp(
+        limitedRequest.id,
+        patientUser,
+        audit.hashIp("127.0.0.1")
+      );
+    }
+    await expect(
+      service.issueApprovalOtp(
+        limitedRequest.id,
+        patientUser,
+        audit.hashIp("127.0.0.1")
+      )
+    ).rejects.toThrow(/temporarily unavailable/i);
+
+    await db
+      .delete(accessRequests)
+      .where(inArray(accessRequests.id, [expiringRequest.id, lockedRequest.id, limitedRequest.id]));
   });
 });
