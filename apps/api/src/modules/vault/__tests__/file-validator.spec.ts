@@ -11,7 +11,14 @@
  * 7. PNG metadata chunk stripping retains IHDR + IDAT + IEND.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+vi.mock("../../../config/env.js", () => ({
+  env: {
+    NODE_ENV: "test",
+    MAX_UPLOAD_SIZE_BYTES: 10485760,
+  },
+}));
+
 import { FileValidatorService } from "../safety/file-validator.service.js";
 
 // Minimal valid file buffers for each type
@@ -75,27 +82,12 @@ describe("FileValidatorService", () => {
   });
 
   it("rejects files exceeding the size limit", () => {
-    // The validator reads env.MAX_UPLOAD_SIZE_BYTES at call time.
-    // We test with a buffer larger than 8 bytes but smaller than 200 — we just
-    // set a tiny limit by patching env for this specific test.
-    const originalLimit = process.env["MAX_UPLOAD_SIZE_BYTES"];
-    process.env["MAX_UPLOAD_SIZE_BYTES"] = "10"; // 10 bytes max
-    // Re-import env is singleton, so we test the validator's in-method read
-    // FileValidatorService reads env.MAX_UPLOAD_SIZE_BYTES directly at call time.
-    // Since env is singleton, we create a local validator and patch via the service.
-    // Instead, test that a 201-byte file passes through 200-byte limit:
-    // We verify the check exists by calling with a very small buffer limit.
-    // The actual field is: if (buffer.length > env.MAX_UPLOAD_SIZE_BYTES)
-    // Since env is a singleton constant, we test that the guard exists via
-    // a buffer larger than the REAL limit (10485760 bytes = 10MB). We cannot
-    // realistically allocate 10MB in a unit test, so we verify the code path
-    // by checking the error message pattern on a separate validator instance.
-    process.env["MAX_UPLOAD_SIZE_BYTES"] = originalLimit;
+    const oversized = Buffer.alloc(10_485_761);
+    PDF_MAGIC.copy(oversized);
 
-    // Simplified: verify the guard code exists by checking size vs length directly
-    // (the actual env-based limit is integration-tested in E2E)
-    const smallBuf = Buffer.alloc(5); // 5 bytes — too small
-    expect(() => validator.validate(smallBuf, "application/pdf")).toThrow(/too small/);
+    expect(() => validator.validate(oversized, "application/pdf")).toThrow(
+      /File exceeds maximum allowed size/
+    );
   });
 
   it("rejects files that are too small to be valid", () => {

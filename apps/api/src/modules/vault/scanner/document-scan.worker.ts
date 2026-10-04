@@ -30,6 +30,7 @@ import { StorageService } from "../storage/storage.service.js";
 import { ClamAvScannerService } from "./clamav-scanner.service.js";
 import { AuditService } from "../../audit/audit.service.js";
 import { env } from "../../../config/env.js";
+import { getRedisConnectionOptions } from "../../../config/redis.config.js";
 
 export const SCAN_QUEUE_NAME = "document-scan";
 
@@ -51,11 +52,8 @@ export class DocumentScanWorker implements OnModuleInit, OnModuleDestroy {
     @Inject(AuditService) private readonly audit: AuditService,
   ) {}
 
-  onModuleInit(): void {
-    const redisUrl =
-      env.REDIS_URL ??
-      `redis://${env.REDIS_PASSWORD ? `:${env.REDIS_PASSWORD}@` : ""}${env.REDIS_HOST}:${env.REDIS_PORT}/0`;
-    this.start(redisUrl);
+  async onModuleInit(): Promise<void> {
+    await this.start();
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -64,40 +62,37 @@ export class DocumentScanWorker implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  start(redisUrl: string): void {
-    try {
-      this.worker = new Worker<ScanDocumentJob>(
-        SCAN_QUEUE_NAME,
-        async (job: Job<ScanDocumentJob>) => {
-          await this.processJob(job);
-        },
-        {
-          connection: { url: redisUrl },
-          concurrency: 2,
-        }
-      );
+  async start(queueName = SCAN_QUEUE_NAME): Promise<void> {
+    this.worker = new Worker<ScanDocumentJob>(
+      queueName,
+      async (job: Job<ScanDocumentJob>) => {
+        await this.processJob(job);
+      },
+      {
+        connection: getRedisConnectionOptions(),
+        concurrency: 2,
+      }
+    );
 
-      this.worker.on("completed", (job) => {
-        this.logger.log(`[ScanWorker] Job ${job.id} completed`);
-      });
+    this.worker.on("completed", () => {
+      this.logger.log("[ScanWorker] Scan job completed.");
+    });
 
-      this.worker.on("failed", (job, err) => {
-        this.logger.error(`[ScanWorker] Job ${job?.id} failed: ${err.message}`);
-      });
+    this.worker.on("failed", (job, err) => {
+      this.logger.error("[ScanWorker] Scan job failed.", err.stack);
+    });
 
-      this.worker.on("error", (err) => {
-        this.logger.warn(`[ScanWorker] Redis connection error: ${err.message}`);
-      });
+    this.worker.on("error", (err) => {
+      this.logger.warn(`[ScanWorker] Redis connection error: ${err.message}`);
+    });
 
-      this.logger.log(`[ScanWorker] Listening on queue: ${SCAN_QUEUE_NAME}`);
-    } catch (err) {
-      this.logger.warn(`[ScanWorker] Could not connect BullMQ worker: ${String(err)}`);
-    }
+    await this.worker.waitUntilReady();
+    this.logger.log(`[ScanWorker] Listening on queue: ${queueName}`);
   }
 
   private async processJob(job: Job<ScanDocumentJob>): Promise<void> {
     const { documentId, quarantineKey, quarantineBucket } = job.data;
-    this.logger.log(`[ScanWorker] Processing scan for document ${documentId}`);
+    this.logger.log("[ScanWorker] Processing document scan.");
 
     // Mark as scanning
     await db
@@ -177,7 +172,7 @@ export class DocumentScanWorker implements OnModuleInit, OnModuleDestroy {
         ipHash: "00000000000000000000000000000000",
       });
 
-      this.logger.warn(`[ScanWorker] INFECTED document ${documentId} — kept in quarantine`);
+      this.logger.warn("[ScanWorker] Infected document retained in quarantine.");
       return;
     }
 
@@ -214,11 +209,11 @@ export class DocumentScanWorker implements OnModuleInit, OnModuleDestroy {
       ipHash: "00000000000000000000000000000000",
     });
 
-    this.logger.log(`[ScanWorker] Document ${documentId} is clean and live at ${liveKey}`);
+    this.logger.log("[ScanWorker] Document scan passed; document promoted.");
   }
 
   private async markScanFailed(documentId: string, reason: string): Promise<void> {
-    this.logger.error(`[ScanWorker] Scan failed for ${documentId}: ${reason}`);
+    this.logger.error(`[ScanWorker] Scan failed: ${reason}`);
     await db
       .update(documents)
       .set({
