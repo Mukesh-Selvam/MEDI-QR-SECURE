@@ -18,6 +18,7 @@ import {
   Logger,
   Inject,
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
 } from "@nestjs/common";
 import { Queue } from "bullmq";
@@ -27,9 +28,14 @@ import {
   documentCryptoKeys,
   documentVersions,
   fhirDocumentReferences,
+  patients,
 } from "../../database/schema.js";
 import { eq, and, isNull, desc } from "drizzle-orm";
 import { VaultCryptoService } from "./crypto/vault-crypto.service.js";
+import {
+  hasActiveFacilityPatientRelationship,
+  isVerifiedGuardianOfPatient,
+} from "../auth/patient-access.js";
 import { FileValidatorService } from "./safety/file-validator.service.js";
 import { StorageService, PRESIGNED_URL_EXPIRY_SECONDS } from "./storage/storage.service.js";
 import { FhirDocumentMapper } from "./fhir/fhir-document.mapper.js";
@@ -63,8 +69,8 @@ export interface UploadDocumentInput {
   patientId: string;
   /** Authenticated uploader's user ID */
   uploaderId: string;
-  /** Upload source label */
-  uploadSource: UploadSource;
+  /** Role from the authenticated session; source labels are derived server-side. */
+  uploaderRole: string;
   /** Optional clinical document date (not upload date) */
   documentDate?: Date;
   /** Optional opaque notes (must not contain patient identifiers) */
@@ -112,6 +118,46 @@ export class VaultService {
         backoff: { type: "exponential", delay: 2000 },
       },
     });
+    this.scanQueue.on("error", () => {
+      this.logger.warn("Redis queue client reported a connection error.");
+    });
+  }
+
+  async resolveUploadSource(
+    patientId: string,
+    uploaderId: string,
+    uploaderRole: string,
+    facilityId?: string
+  ): Promise<UploadSource> {
+    if (uploaderRole === "patient") {
+      const [patient] = await db
+        .select({ id: patients.id })
+        .from(patients)
+        .where(and(eq(patients.id, patientId), eq(patients.userId, uploaderId)))
+        .limit(1);
+
+      if (patient) return "patient-uploaded";
+      throw new ForbiddenException("Patients may upload only to their own record");
+    }
+
+    if (uploaderRole === "guardian") {
+      if (await isVerifiedGuardianOfPatient(uploaderId, patientId)) {
+        return "patient-uploaded";
+      }
+      throw new ForbiddenException("Guardian upload requires an active verified guardianship");
+    }
+
+    if (
+      facilityId &&
+      (uploaderRole === "facility-admin" || uploaderRole === "pharmacy-staff") &&
+      await hasActiveFacilityPatientRelationship(facilityId, patientId)
+    ) {
+      return "facility-verified";
+    }
+
+    throw new ForbiddenException(
+      "Upload is not permitted without an established patient relationship"
+    );
   }
 
   /**
@@ -119,7 +165,25 @@ export class VaultService {
    * Returns immediately (202 Accepted); scan is asynchronous.
    */
   async uploadDocument(input: UploadDocumentInput): Promise<{ id: string; status: "quarantined" }> {
-    const { fileBuffer, declaredMimeType, documentType, patientId, uploaderId, uploadSource, documentDate, notes, facilityId, ipHash } = input;
+    const {
+      fileBuffer,
+      declaredMimeType,
+      documentType,
+      patientId,
+      uploaderId,
+      uploaderRole,
+      documentDate,
+      notes,
+      facilityId,
+      ipHash,
+    } = input;
+
+    const uploadSource = await this.resolveUploadSource(
+      patientId,
+      uploaderId,
+      uploaderRole,
+      facilityId
+    );
 
     // 1. Validate file (magic bytes, size, metadata strip)
     const validated = this.fileValidator.validate(fileBuffer, declaredMimeType);
@@ -189,7 +253,7 @@ export class VaultService {
     // 8. Audit event — no patient identifiers in the payload
     await this.audit.log({
       actorId: uploaderId,
-      actorRole: uploadSource === "facility-verified" ? "facility-admin" : "patient",
+      actorRole: uploaderRole,
       action: "DOCUMENT_UPLOADED",
       resourceType: "document",
       resourceId: doc.id,

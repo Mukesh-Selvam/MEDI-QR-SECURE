@@ -15,6 +15,13 @@
       "when": 1791049602982,
       "tag": "0001_vault_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791091779235,
+      "tag": "0002_facility_patient_relationships",
+      "breakpoints": true
     }
   ]
 }

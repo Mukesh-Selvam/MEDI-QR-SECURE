@@ -101,6 +101,7 @@ export const users = pgTable(
     email: varchar("email", { length: 255 }).unique(),
     role: userRoleEnum("role").notNull().default("patient"),
     status: userStatusEnum("status").notNull().default("active"),
+    facilityId: uuid("facility_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -190,6 +191,28 @@ export const guardianships = pgTable(
   (table) => [
     index("guardianships_guardian_idx").on(table.guardianPatientId),
     index("guardianships_ward_idx").on(table.wardPatientId),
+  ]
+);
+
+export const patientFacilityRelationships = pgTable(
+  "patient_facility_relationships",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "cascade" }),
+    facilityId: uuid("facility_id").notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    validUntil: timestamp("valid_until", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("patient_facility_relationship_pair_idx").on(
+      table.patientId,
+      table.facilityId
+    ),
+    index("patient_facility_relationship_facility_idx").on(table.facilityId),
   ]
 );
 
@@ -387,6 +410,10 @@ export type Clinician = typeof clinicians.$inferSelect;
 export type NewClinician = typeof clinicians.$inferInsert;
 export type Guardianship = typeof guardianships.$inferSelect;
 export type NewGuardianship = typeof guardianships.$inferInsert;
+export type PatientFacilityRelationship =
+  typeof patientFacilityRelationships.$inferSelect;
+export type NewPatientFacilityRelationship =
+  typeof patientFacilityRelationships.$inferInsert;
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
 export type AuditEvent = typeof auditEvents.$inferSelect;

@@ -126,7 +126,9 @@ export class AuthController {
 
   @RequirePolicy({ resource: "auth", action: "read" })
   @Get("me")
-  me(@CurrentUser() user: AuthenticatedUser): AuthenticatedUser {
-    return user;
+  me(
+    @CurrentUser() user: AuthenticatedUser
+  ): Promise<AuthenticatedUser & { patientId: string | null }> {
+    return this.authService.getCurrentUserProfile(user);
   }
 }

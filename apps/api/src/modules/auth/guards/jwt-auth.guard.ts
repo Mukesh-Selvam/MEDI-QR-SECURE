@@ -55,6 +55,10 @@ export class JwtAuthGuard implements CanActivate {
         sub: payload.sub!,
         role: (payload["role"] as string) ?? "patient",
         isVerified: (payload["is_verified"] as boolean) ?? false,
+        facilityId:
+          typeof payload["facility_id"] === "string"
+            ? payload["facility_id"]
+            : undefined,
       };
 
       (request as unknown as Record<string, unknown>)["user"] = user;

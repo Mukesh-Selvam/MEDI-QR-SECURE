@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 
 type DocumentType = "scan" | "lab" | "prescription" | "vaccination" | "discharge";
 
@@ -20,6 +20,40 @@ export default function UploadPage() {
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<{ id: string; status: string; message: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [patientId, setPatientId] = useState<string | null>(null);
+  const [contextLoading, setContextLoading] = useState(true);
+  const [contextError, setContextError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadPatientContext = async () => {
+      try {
+        const response = await fetch("/api/v1/auth/me", { credentials: "include" });
+        if (!response.ok) throw new Error("Sign in to upload a record.");
+        const profile = await response.json() as { role?: unknown; patientId?: unknown };
+        if (profile.role !== "patient" || typeof profile.patientId !== "string") {
+          throw new Error("A signed-in patient profile is required to upload a record.");
+        }
+        if (active) setPatientId(profile.patientId);
+      } catch (contextLoadError) {
+        if (active) {
+          setContextError(
+            contextLoadError instanceof Error
+              ? contextLoadError.message
+              : "Unable to load the signed-in patient profile."
+          );
+        }
+      } finally {
+        if (active) setContextLoading(false);
+      }
+    };
+
+    void loadPatientContext();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -43,20 +77,19 @@ export default function UploadPage() {
   };
 
   const handleUpload = async () => {
-    if (!file) return;
+    if (!file || !patientId) return;
     setUploading(true);
     setError(null);
     try {
       const form = new FormData();
       form.append("file", file);
       form.append("documentType", docType);
-      form.append("uploadSource", "patient-uploaded");
-      // patientId would come from session in production
-      form.append("patientId", "00000000-0000-0000-0000-000000000001");
+      form.append("patientId", patientId);
       if (docDate) form.append("documentDate", new Date(docDate).toISOString());
 
       const res = await fetch("/api/v1/vault/upload", {
         method: "POST",
+        headers: { "x-mediqr-patient-id": patientId },
         body: form,
         credentials: "include",
       });
@@ -132,6 +165,8 @@ export default function UploadPage() {
           <div className="badge">
             🔒 End-to-end encrypted · AES-256-GCM · Virus scanned before access
           </div>
+          {contextLoading && <p role="status">Loading signed-in patient profile…</p>}
+          {contextError && <div className="error" role="alert">{contextError}</div>}
 
           <label>Document Type</label>
           <div className="type-grid" style={{ marginBottom: "1.5rem" }}>
@@ -186,7 +221,7 @@ export default function UploadPage() {
 
           <button
             className="btn btn-primary"
-            disabled={!file || uploading}
+            disabled={!file || !patientId || contextLoading || uploading}
             onClick={handleUpload}
             type="button"
           >

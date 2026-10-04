@@ -294,6 +294,7 @@ export class AuthService {
     const accessToken = await new SignJWT({
       mediqr_user_id: resolvedUser.id,
       role: resolvedUser.role,
+      facility_id: resolvedUser.facilityId,
     })
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
@@ -411,6 +412,7 @@ export class AuthService {
     const accessToken = await new SignJWT({
       mediqr_user_id: userRow.id,
       role: userRow.role,
+      facility_id: userRow.facilityId,
     })
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
@@ -493,6 +495,18 @@ export class AuthService {
     });
 
     return { message: "All sessions revoked" };
+  }
+
+  async getCurrentUserProfile(
+    user: AuthenticatedUser
+  ): Promise<AuthenticatedUser & { patientId: string | null }> {
+    const patient = await db.query.patients.findFirst({
+      columns: { id: true },
+      where: (patientRecord, { eq: equals }) =>
+        equals(patientRecord.userId, user.id),
+    });
+
+    return { ...user, patientId: patient?.id ?? null };
   }
 
   // ---------------------------------------------------------------------------

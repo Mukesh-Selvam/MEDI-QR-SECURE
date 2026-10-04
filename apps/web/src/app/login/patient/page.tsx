@@ -82,12 +82,11 @@ export default function PatientLoginPage() {
 
       // Fetch user profile from /auth/me
       const meRes = await fetch("/api/v1/auth/me");
-      if (meRes.ok) {
-        const meData = await meRes.json();
-        setUserProfile(meData);
-      } else {
-        setUserProfile({ id: "verified-patient-session", role: "patient" });
+      if (!meRes.ok) {
+        throw new Error("Unable to load the signed-in patient profile");
       }
+      const meData = await meRes.json() as { id: string; role: string };
+      setUserProfile(meData);
 
       setStep("authenticated");
     } catch (err: any) {

@@ -25,6 +25,14 @@ resourcePolicy:
           expr: >
             request.principal.attr.guardian_ward_ids.exists(wardId, wardId == request.resource.attr.owner_id)
 
+    - actions: ["create"]
+      roles: ["guardian"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: >
+            request.principal.attr.guardian_ward_ids.exists(wardId, wardId == request.resource.attr.owner_id)
+
     # -----------------------------------------------------------------------
     # Facility staff: can upload facility-verified documents for patients
     # they have an active relationship or consent with.

@@ -16,7 +16,6 @@ import {
   Get,
   Post,
   Param,
-  Body,
   Req,
   Res,
   UseGuards,
@@ -26,12 +25,20 @@ import {
   HttpStatus,
 } from "@nestjs/common";
 import type { FastifyRequest, FastifyReply } from "fastify";
-import { VaultService, type DocumentType, type UploadSource } from "./vault.service.js";
+import { VaultService } from "./vault.service.js";
 import { RequirePolicy } from "../auth/decorators/policy.decorator.js";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard.js";
 import { PolicyGuard } from "../auth/guards/policy.guard.js";
 import { CurrentUser, type AuthenticatedUser } from "../auth/decorators/current-user.decorator.js";
 import { createHash } from "crypto";
+import { z } from "zod";
+
+const uploadMetadataSchema = z.object({
+  documentType: z.enum(["scan", "lab", "prescription", "vaccination", "discharge"]),
+  patientId: z.string().uuid(),
+  documentDate: z.string().datetime({ offset: true }).optional(),
+  notes: z.string().max(500).optional(),
+}).strip();
 
 @Controller("vault")
 @UseGuards(JwtAuthGuard, PolicyGuard)
@@ -44,7 +51,6 @@ export class VaultController {
    *   - file: <binary>        — required
    *   - documentType: string  — required (scan | lab | prescription | vaccination | discharge)
    *   - patientId: string     — required (UUID of the patient record)
-   *   - uploadSource: string  — required (patient-uploaded | facility-verified)
    *   - documentDate: string  — optional (ISO 8601 date for clinical date)
    *   - notes: string         — optional (must not contain patient identifiers)
    */
@@ -60,19 +66,24 @@ export class VaultController {
     if (!data) throw new BadRequestException("No file attached to request");
 
     const fileBuffer = await data.toBuffer();
-    const fields = data.fields as Record<string, { value: string } | undefined>;
-
-    const documentType = (fields["documentType"]?.value ?? "") as DocumentType;
-    const patientId = fields["patientId"]?.value ?? "";
-    const uploadSource = (fields["uploadSource"]?.value ?? "patient-uploaded") as UploadSource;
-    const documentDateStr = fields["documentDate"]?.value;
-    const notes = fields["notes"]?.value;
-
-    const VALID_TYPES = ["scan", "lab", "prescription", "vaccination", "discharge"];
-    if (!VALID_TYPES.includes(documentType)) {
-      throw new BadRequestException(`Invalid documentType: ${documentType}`);
+    const fields = data.fields as Record<string, { value: unknown } | undefined>;
+    const metadata = uploadMetadataSchema.safeParse({
+      documentType: fields["documentType"]?.value,
+      patientId: fields["patientId"]?.value,
+      documentDate: fields["documentDate"]?.value,
+      notes: fields["notes"]?.value,
+    });
+    if (!metadata.success) {
+      const invalidFields = metadata.error.issues
+        .map((issue) => String(issue.path[0] ?? "metadata"))
+        .join(", ");
+      throw new BadRequestException(`Invalid upload metadata: ${invalidFields}`);
     }
-    if (!patientId) throw new BadRequestException("patientId is required");
+
+    const { documentType, patientId, documentDate, notes } = metadata.data;
+    if (req.headers["x-mediqr-patient-id"] !== patientId) {
+      throw new BadRequestException("Upload authorization target does not match patientId");
+    }
 
     const ipHash = createHash("sha256")
       .update(req.ip ?? "0.0.0.0")
@@ -84,9 +95,10 @@ export class VaultController {
       documentType,
       patientId,
       uploaderId: user.id,
-      uploadSource,
-      documentDate: documentDateStr ? new Date(documentDateStr) : undefined,
+      uploaderRole: user.role,
+      documentDate: documentDate ? new Date(documentDate) : undefined,
       notes,
+      facilityId: user.facilityId,
       ipHash,
     });
 
