@@ -24,7 +24,7 @@ export class ConsentService {
     user: AuthenticatedUser,
     ipHash: string
   ): Promise<{ status: "revoked" }> {
-    const { integrityHash, notificationDeliveries } = await db.transaction(async (transaction) => {
+    const { notificationDeliveries } = await db.transaction(async (transaction) => {
       const [consent] = await transaction
         .select({
           id: consents.id,
@@ -52,7 +52,7 @@ export class ConsentService {
             gt(consents.expiresAt, new Date())
           )
         );
-      const integrityHash = await this.audit.logInTransaction(
+      await this.audit.logInTransaction(
         {
           actorId: user.id,
           actorRole: user.role,
@@ -71,9 +71,8 @@ export class ConsentService {
           consent.accessRequestId,
           transaction
         );
-      return { integrityHash, notificationDeliveries };
+      return { notificationDeliveries };
     });
-    this.audit.commitTransactionHash(integrityHash);
     await this.notifications.deliverDevelopmentEmails(notificationDeliveries);
     return { status: "revoked" };
   }

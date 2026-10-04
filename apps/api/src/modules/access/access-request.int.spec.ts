@@ -96,15 +96,9 @@ describe("Access request creation (integration)", () => {
       await db.delete(patients).where(eq(patients.id, patientId));
     }
     if (patientUserId) {
-      await db
-        .delete(auditEvents)
-        .where(eq(auditEvents.actorId, patientUserId));
       await db.delete(users).where(eq(users.id, patientUserId));
     }
     if (clinicianUserId) {
-      await db
-        .delete(auditEvents)
-        .where(eq(auditEvents.actorId, clinicianUserId));
       await db
         .delete(clinicians)
         .where(eq(clinicians.userId, clinicianUserId));

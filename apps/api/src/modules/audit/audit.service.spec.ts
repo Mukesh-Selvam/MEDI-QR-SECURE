@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   insert: vi.fn(),
   values: vi.fn(),
+  returning: vi.fn(),
 }));
 
 vi.mock("../../database/index.js", () => ({
@@ -27,7 +28,8 @@ const event = {
 describe("AuditService.logInTransaction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.values.mockResolvedValue(undefined);
+    mocks.returning.mockResolvedValue([{ integrityHash: "database-chain-hash" }]);
+    mocks.values.mockReturnValue({ returning: mocks.returning });
     const transaction = {
       insert: mocks.insert.mockReturnValue({ values: mocks.values }),
     };
@@ -37,13 +39,13 @@ describe("AuditService.logInTransaction", () => {
     );
   });
 
-  it("inserts the audit event through the active database transaction", async () => {
+  it("returns the chain hash assigned by the database trigger", async () => {
     const audit = new AuditService();
 
-    await audit.logInTransaction(event);
-
+    await expect(audit.logInTransaction(event)).resolves.toBe(
+      "database-chain-hash"
+    );
     expect(mocks.transaction).toHaveBeenCalledOnce();
-    expect(mocks.insert).toHaveBeenCalledOnce();
     expect(mocks.values).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "DOCUMENT_VIEWED",
@@ -53,13 +55,18 @@ describe("AuditService.logInTransaction", () => {
     );
   });
 
-  it("propagates insert failures and does not advance the in-memory hash", async () => {
+  it("does not hold chain state in the API process after a failed insert", async () => {
     const audit = new AuditService();
-    mocks.values.mockRejectedValueOnce(new Error("database unavailable"));
+    mocks.returning
+      .mockRejectedValueOnce(new Error("database unavailable"))
+      .mockResolvedValueOnce([{ integrityHash: "database-chain-hash" }]);
 
-    await expect(audit.logInTransaction(event)).rejects.toThrow("database unavailable");
-    await audit.logInTransaction(event);
-
+    await expect(audit.logInTransaction(event)).rejects.toThrow(
+      "database unavailable"
+    );
+    await expect(audit.logInTransaction(event)).resolves.toBe(
+      "database-chain-hash"
+    );
     expect(mocks.values).toHaveBeenLastCalledWith(
       expect.objectContaining({ previousHash: "GENESIS" })
     );

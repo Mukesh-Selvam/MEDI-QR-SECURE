@@ -260,7 +260,7 @@ export class AccessRequestApprovalService {
     await this.redis.set(otpKey, JSON.stringify(challenge), "EX", OTP_TTL_SECONDS);
 
     try {
-      const integrityHash = await this.audit.logInTransaction({
+      await this.audit.logInTransaction({
         actorId: user.id,
         actorRole: user.role,
         action: "ACCESS_REQUEST_OTP_ISSUED",
@@ -269,7 +269,6 @@ export class AccessRequestApprovalService {
         outcome: "SUCCESS",
         ipHash,
       });
-      this.audit.commitTransactionHash(integrityHash);
     } catch (error) {
       await this.redis.del(otpKey);
       throw error;
@@ -359,7 +358,7 @@ export class AccessRequestApprovalService {
       throw new ForbiddenException("Patient or guardian approval is required");
     }
 
-    const { integrityHash, notificationDeliveries } = await db.transaction(async (transaction) => {
+    const { notificationDeliveries } = await db.transaction(async (transaction) => {
       const [request] = await transaction
         .select({
           id: accessRequests.id,
@@ -415,7 +414,7 @@ export class AccessRequestApprovalService {
         });
       }
 
-      const integrityHash = await this.audit.logInTransaction(
+      await this.audit.logInTransaction(
         {
           actorId: approverUserId,
           actorRole: approverRole,
@@ -434,9 +433,8 @@ export class AccessRequestApprovalService {
           request.id,
           transaction
         );
-      return { integrityHash, notificationDeliveries };
+      return { notificationDeliveries };
     });
-    this.audit.commitTransactionHash(integrityHash);
     await this.notifications.deliverDevelopmentEmails(notificationDeliveries);
   }
 }

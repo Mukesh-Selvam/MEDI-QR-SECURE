@@ -311,9 +311,9 @@ export class VaultService {
       throw new ForbiddenException("No active consent covers this record");
     }
 
-    const { integrityHash, notificationDeliveries } = await db.transaction(
+    const notificationDeliveries = await db.transaction(
       async (transaction) => {
-        const integrityHash = await this.audit.logInTransaction(
+        await this.audit.logInTransaction(
           {
             actorId,
             actorRole,
@@ -333,10 +333,9 @@ export class VaultService {
               transaction
             )
           : [];
-        return { integrityHash, notificationDeliveries };
+        return notificationDeliveries;
       }
     );
-    this.audit.commitTransactionHash(integrityHash);
     await this.notifications.deliverDevelopmentEmails(notificationDeliveries);
 
     // Generate the URL only after the audit transaction commits.
@@ -399,9 +398,9 @@ export class VaultService {
       throw new ForbiddenException("No active consent covers this record");
     }
 
-    const { integrityHash, notificationDeliveries } = await db.transaction(
+    const notificationDeliveries = await db.transaction(
       async (transaction) => {
-        const integrityHash = await this.audit.logInTransaction(
+        await this.audit.logInTransaction(
           {
             actorId,
             actorRole,
@@ -421,10 +420,9 @@ export class VaultService {
               transaction
             )
           : [];
-        return { integrityHash, notificationDeliveries };
+        return notificationDeliveries;
       }
     );
-    this.audit.commitTransactionHash(integrityHash);
     await this.notifications.deliverDevelopmentEmails(notificationDeliveries);
 
     // 1. Fetch encrypted ciphertext only after the audit transaction commits.

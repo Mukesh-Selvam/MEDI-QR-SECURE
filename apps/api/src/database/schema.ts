@@ -21,6 +21,7 @@ import {
   uniqueIndex,
   integer,
   jsonb,
+  bigint,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -282,7 +283,7 @@ export const auditEvents = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     timestamp: timestamp("timestamp", { withTimezone: true }).notNull().defaultNow(),
-    actorId: uuid("actor_id").references(() => users.id),
+    actorId: uuid("actor_id"),
     actorRole: varchar("actor_role", { length: 50 }),
     action: varchar("action", { length: 100 }).notNull(),
     resourceType: varchar("resource_type", { length: 100 }).notNull(),
@@ -292,11 +293,13 @@ export const auditEvents = pgTable(
     userAgent: varchar("user_agent", { length: 255 }),
     integrityHash: varchar("integrity_hash", { length: 64 }).notNull(),
     previousHash: varchar("previous_hash", { length: 64 }).notNull(),
+    eventIndex: bigint("event_index", { mode: "number" }).notNull().default(0),
   },
   (table) => [
     index("audit_events_timestamp_idx").on(table.timestamp),
     index("audit_events_actor_idx").on(table.actorId),
     index("audit_events_action_idx").on(table.action),
+    uniqueIndex("audit_events_event_index_idx").on(table.eventIndex),
   ]
 );
 

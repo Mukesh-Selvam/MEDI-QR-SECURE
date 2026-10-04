@@ -20,10 +20,7 @@ import { RequirePolicy } from "../auth/decorators/policy.decorator.js";
 
 const clinicianIdSchema = z.string().uuid();
 const verificationBodySchema = z.object({ isVerified: z.boolean() }).strict();
-type ClinicianAudit = Pick<
-  AuditService,
-  "hashIp" | "logInTransaction" | "commitTransactionHash"
->;
+type ClinicianAudit = Pick<AuditService, "hashIp" | "logInTransaction">;
 
 @Controller("clinicians")
 export class CliniciansController {
@@ -62,7 +59,7 @@ export class CliniciansController {
           : undefined,
     };
 
-    const integrityHash = await db.transaction(async (transaction) => {
+    const updated = await db.transaction(async (transaction) => {
       const [updated] = await transaction
         .update(clinicians)
         .set({
@@ -75,10 +72,9 @@ export class CliniciansController {
         .returning({ id: clinicians.id, isVerified: clinicians.isVerified });
 
       if (!updated) throw new NotFoundException("Clinician not found.");
-      const hash = await this.audit.logInTransaction(event, transaction);
-      return { updated, hash };
+      await this.audit.logInTransaction(event, transaction);
+      return updated;
     });
-    this.audit.commitTransactionHash(integrityHash.hash);
-    return integrityHash.updated;
+    return updated;
   }
 }

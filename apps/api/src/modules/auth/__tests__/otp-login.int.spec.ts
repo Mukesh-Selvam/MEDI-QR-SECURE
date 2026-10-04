@@ -86,23 +86,8 @@ describe("Patient OTP login (integration)", () => {
 
   afterAll(async () => {
     if (userId) {
-      await db
-        .delete(auditEvents)
-        .where(eq(auditEvents.actorId, userId));
       await db.delete(sessions).where(eq(sessions.userId, userId));
       await db.delete(users).where(eq(users.id, userId));
-    }
-
-    if (auditIpHash && startedAt) {
-      await db
-        .delete(auditEvents)
-        .where(
-          and(
-            eq(auditEvents.ipHash, auditIpHash),
-            eq(auditEvents.action, "AUTH_OTP_SEND"),
-            gte(auditEvents.timestamp, startedAt)
-          )
-        );
     }
 
     await app?.close();

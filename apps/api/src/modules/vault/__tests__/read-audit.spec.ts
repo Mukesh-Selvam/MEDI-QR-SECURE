@@ -18,7 +18,6 @@ const mocks = vi.hoisted(() => ({
   decrypt: vi.fn(),
   notificationRecords: vi.fn(),
   notificationEmail: vi.fn(),
-  commitAuditHash: vi.fn(),
   findActiveConsentRequestId: vi.fn(),
 }));
 
@@ -82,7 +81,6 @@ function buildService(): VaultService {
     {} as FhirDocumentMapper,
     {
       logInTransaction: mocks.audit,
-      commitTransactionHash: mocks.commitAuditHash,
     } as unknown as AuditService,
     {
       recordForPatientAndGuardians: mocks.notificationRecords,
@@ -97,7 +95,6 @@ describe("VaultService read audit ordering", () => {
     mocks.selectResults = [[readyDocument]];
     mocks.select.mockImplementation(() => queryBuilder(mocks.selectResults.shift()));
     mocks.audit.mockResolvedValue("integrity-hash");
-    mocks.commitAuditHash.mockReset();
     mocks.notificationRecords.mockResolvedValue([]);
     mocks.notificationEmail.mockResolvedValue(undefined);
     mocks.findActiveConsentRequestId.mockResolvedValue(

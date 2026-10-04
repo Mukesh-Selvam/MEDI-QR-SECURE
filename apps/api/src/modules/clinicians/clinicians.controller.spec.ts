@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   updatedRows: [{ id: "52e46930-500d-4605-bbac-7cb3ace9426c", isVerified: true }],
   logInTransaction: vi.fn(),
-  commitTransactionHash: vi.fn(),
   hashIp: vi.fn(() => "opaque-ip-hash"),
   transaction: vi.fn(),
 }));
@@ -26,7 +25,6 @@ describe("CliniciansController verification boundary", () => {
   const audit = {
     hashIp: state.hashIp,
     logInTransaction: state.logInTransaction,
-    commitTransactionHash: state.commitTransactionHash,
   };
 
   beforeEach(() => {
@@ -100,6 +98,5 @@ describe("CliniciansController verification boundary", () => {
       }),
       expect.any(Object)
     );
-    expect(state.commitTransactionHash).toHaveBeenCalledWith("audit-chain-hash");
   });
 });

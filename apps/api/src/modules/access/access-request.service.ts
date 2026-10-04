@@ -65,7 +65,7 @@ export class AccessRequestService {
         })
         .returning({ id: accessRequests.id });
 
-      const integrityHash = await this.audit.logInTransaction(
+      await this.audit.logInTransaction(
         {
           actorId: user.id,
           actorRole: user.role,
@@ -85,9 +85,8 @@ export class AccessRequestService {
           transaction
         );
 
-      return { requestId: created.id, integrityHash, notificationDeliveries };
+      return { requestId: created.id, notificationDeliveries };
     });
-    this.audit.commitTransactionHash(result.integrityHash);
     await this.notifications.deliverDevelopmentEmails(
       result.notificationDeliveries
     );

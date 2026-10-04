@@ -70,7 +70,7 @@ export class QrCredentialsService {
         .values({ patientId, tokenHash })
         .returning({ id: qrCredentials.id });
 
-      const integrityHash = await this.audit.logInTransaction(
+      await this.audit.logInTransaction(
         {
           actorId: userId,
           actorRole: role,
@@ -83,9 +83,8 @@ export class QrCredentialsService {
         transaction
       );
 
-      return { id: created.id, integrityHash };
+      return { id: created.id };
     });
-    this.audit.commitTransactionHash(result.integrityHash);
 
     return { id: result.id, credentialToken };
   }
@@ -105,7 +104,7 @@ export class QrCredentialsService {
       throw new ForbiddenException("Only the patient can revoke this credential");
     }
 
-    const result = await db.transaction(async (transaction) => {
+    await db.transaction(async (transaction) => {
       const [updated] = await transaction
         .update(qrCredentials)
         .set({ status: "revoked", revokedAt: new Date() })
@@ -120,7 +119,7 @@ export class QrCredentialsService {
 
       if (!updated) throw new NotFoundException("Active QR credential not found");
 
-      return this.audit.logInTransaction(
+      await this.audit.logInTransaction(
         {
           actorId: userId,
           actorRole: role,
@@ -133,7 +132,6 @@ export class QrCredentialsService {
         transaction
       );
     });
-    this.audit.commitTransactionHash(result);
   }
 
   async getInAppToken(

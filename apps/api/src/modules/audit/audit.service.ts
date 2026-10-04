@@ -7,7 +7,7 @@
  * 3. IP addresses are HMAC-hashed before storage.
  */
 import { Injectable } from "@nestjs/common";
-import { createHash, createHmac } from "crypto";
+import { createHmac } from "crypto";
 import { db } from "../../database/index.js";
 import { auditEvents } from "../../database/schema.js";
 import { env } from "../../config/env.js";
@@ -17,15 +17,12 @@ type AuditInsertExecutor = Pick<typeof db, "insert">;
 
 @Injectable()
 export class AuditService {
-  /** HMAC of the last inserted record hash for chain integrity */
-  private lastHash = "GENESIS";
-
   hashIp(ip: string): string {
     return createHmac("sha256", env.AUDIT_HMAC_KEY).update(ip).digest("hex");
   }
 
   async log(event: AuditEventInput): Promise<void> {
-    this.lastHash = await this.insertEvent(event, db);
+    await this.logInTransaction(event);
   }
 
   async logInTransaction(
@@ -35,34 +32,16 @@ export class AuditService {
     if (executor) {
       return this.insertEvent(event, executor);
     }
-    const integrityHash = await db.transaction((transaction) =>
+    return db.transaction((transaction) =>
       this.insertEvent(event, transaction)
     );
-    this.lastHash = integrityHash;
-    return integrityHash;
-  }
-
-  commitTransactionHash(integrityHash: string): void {
-    this.lastHash = integrityHash;
   }
 
   private async insertEvent(
     event: AuditEventInput,
     executor: AuditInsertExecutor
   ): Promise<string> {
-    const previousHash = this.lastHash;
-
-    const payload = JSON.stringify({
-      ...event,
-      previousHash,
-      ts: Date.now(),
-    });
-
-    const integrityHash = createHash("sha256")
-      .update(payload)
-      .digest("hex");
-
-    await executor.insert(auditEvents).values({
+    const [inserted] = await executor.insert(auditEvents).values({
       actorId: event.actorId,
       actorRole: event.actorRole,
       action: event.action,
@@ -71,9 +50,10 @@ export class AuditService {
       outcome: event.outcome,
       ipHash: event.ipHash,
       userAgent: event.userAgent,
-      integrityHash,
-      previousHash,
-    });
-    return integrityHash;
+      integrityHash: "0".repeat(64),
+      previousHash: "GENESIS",
+    }).returning({ integrityHash: auditEvents.integrityHash });
+    if (!inserted) throw new Error("Audit event insert returned no chain hash");
+    return inserted.integrityHash;
   }
 }

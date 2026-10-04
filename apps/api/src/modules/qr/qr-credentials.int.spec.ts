@@ -62,15 +62,7 @@ describe("QR credential lifecycle (integration)", () => {
       await db.delete(qrCredentials).where(eq(qrCredentials.patientId, patientId));
       await db.delete(patients).where(eq(patients.id, patientId));
     }
-    if (userId) {
-      await db.delete(auditEvents).where(eq(auditEvents.actorId, userId));
-      await db.delete(users).where(eq(users.id, userId));
-    }
-    if (resolutionAuditIds.length > 0) {
-      await db
-        .delete(auditEvents)
-        .where(inArray(auditEvents.resourceId, resolutionAuditIds));
-    }
+    if (userId) await db.delete(users).where(eq(users.id, userId));
     await resolution?.onModuleDestroy();
     await pool.end();
   });

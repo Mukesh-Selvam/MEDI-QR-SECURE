@@ -5,7 +5,6 @@ import { createRedisClient } from "../../config/redis.config.js";
 import { db, pool } from "../../database/index.js";
 import {
   accessRequests,
-  auditEvents,
   clinicians,
   consents,
   guardianships,
@@ -219,9 +218,6 @@ describe("Access request approval flow (integration)", () => {
     await db.delete(qrCredentials).where(inArray(qrCredentials.patientId, patientIds));
     await db.delete(guardianships).where(eq(guardianships.wardPatientId, wardPatientId));
     await db.delete(patients).where(inArray(patients.id, patientIds));
-    await db.delete(auditEvents).where(eq(auditEvents.actorId, patientUserId));
-    await db.delete(auditEvents).where(eq(auditEvents.actorId, guardianUserId));
-    await db.delete(auditEvents).where(eq(auditEvents.actorId, clinicianUserId));
     await db.delete(clinicians).where(eq(clinicians.userId, clinicianUserId));
     await db.delete(clinicians).where(eq(clinicians.userId, otherClinicianUserId));
     await db.delete(users).where(eq(users.id, patientUserId));
