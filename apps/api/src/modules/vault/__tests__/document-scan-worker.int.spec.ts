@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   cryptoKey: undefined as Record<string, unknown> | undefined,
   documentState: {} as Record<string, unknown>,
+  fhirResource: undefined as Record<string, unknown> | undefined,
   select: vi.fn(),
   update: vi.fn(),
   auditLog: vi.fn(),
@@ -25,7 +26,14 @@ vi.mock("../../../database/index.js", () => ({
 
 import { env } from "../../../config/env.js";
 import { getRedisConnectionOptions } from "../../../config/redis.config.js";
+import {
+  documentCryptoKeys,
+  documents,
+  fhirDocumentReferences,
+  type Document,
+} from "../../../database/schema.js";
 import type { AuditService } from "../../audit/audit.service.js";
+import { FhirDocumentMapper } from "../fhir/fhir-document.mapper.js";
 import type { VaultCryptoService } from "../crypto/vault-crypto.service.js";
 import { ClamAvScannerService } from "../scanner/clamav-scanner.service.js";
 import {
@@ -67,17 +75,28 @@ describe("DocumentScanWorker (integration)", () => {
       status: "quarantined",
       scanStatus: "pending",
     };
+    mocks.fhirResource = new FhirDocumentMapper().map(
+      createDocument(),
+      "ab".repeat(32)
+    ).resource as unknown as Record<string, unknown>;
     mocks.select.mockImplementation(() => ({
-      from: () => ({
+      from: (table: unknown) => ({
         where: () => ({
-          limit: async () => [mocks.cryptoKey],
+          limit: async () =>
+            table === documentCryptoKeys
+              ? [mocks.cryptoKey]
+              : [{ resource: mocks.fhirResource }],
         }),
       }),
     }));
-    mocks.update.mockImplementation(() => ({
+    mocks.update.mockImplementation((table: unknown) => ({
       set: (changes: Record<string, unknown>) => ({
         where: async () => {
-          Object.assign(mocks.documentState, changes);
+          if (table === documents) {
+            Object.assign(mocks.documentState, changes);
+          } else if (table === fhirDocumentReferences) {
+            mocks.fhirResource = changes["resource"] as Record<string, unknown>;
+          }
         },
       }),
     }));
@@ -139,6 +158,10 @@ describe("DocumentScanWorker (integration)", () => {
       status: "ready",
       scanStatus: "clean",
     });
+    expect(mocks.fhirResource).toMatchObject({
+      status: "current",
+      docStatus: "final",
+    });
     expect(promote).toHaveBeenCalledOnce();
     const liveKey = mocks.documentState["storageKey"];
     expect(liveKey).toEqual(expect.any(String));
@@ -176,6 +199,10 @@ describe("DocumentScanWorker (integration)", () => {
     expect(mocks.documentState).toMatchObject({
       status: "quarantined",
       scanStatus: "infected",
+    });
+    expect(mocks.fhirResource).toMatchObject({
+      status: "entered-in-error",
+      docStatus: "entered-in-error",
     });
     expect(promote).not.toHaveBeenCalled();
     await expect(
@@ -216,6 +243,10 @@ describe("DocumentScanWorker (integration)", () => {
       status: "quarantined",
       scanStatus: "scan_failed",
     });
+    expect(mocks.fhirResource).toMatchObject({
+      status: "entered-in-error",
+      docStatus: "entered-in-error",
+    });
     expect(promote).not.toHaveBeenCalled();
     await expect(
       storage.getObject(env.STORAGE_BUCKET_QUARANTINE, quarantineKey)
@@ -251,4 +282,30 @@ async function enqueueAndWait(
     removeOnFail: true,
   });
   await job.waitUntilFinished(events, 40000);
+}
+
+function createDocument(): Document {
+  const now = new Date("2026-01-01T00:00:00.000Z");
+
+  return {
+    id: randomUUID(),
+    patientId: randomUUID(),
+    uploaderId: randomUUID(),
+    uploadSource: "patient-uploaded",
+    documentType: "lab",
+    storageKey: "q/test",
+    storageBucket: env.STORAGE_BUCKET_QUARANTINE,
+    mimeType: "application/pdf",
+    fileSizeBytes: 1024,
+    status: "quarantined",
+    scanStatus: "pending",
+    scanCompletedAt: null,
+    scanThreatName: null,
+    documentDate: null,
+    facilityId: null,
+    notes: null,
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: null,
+  };
 }

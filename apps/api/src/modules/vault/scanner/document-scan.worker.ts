@@ -23,8 +23,16 @@
 import { Injectable, Logger, Inject, OnModuleInit, OnModuleDestroy } from "@nestjs/common";
 import { Worker, Job } from "bullmq";
 import { db } from "../../../database/index.js";
-import { documents, documentCryptoKeys } from "../../../database/schema.js";
+import {
+  documents,
+  documentCryptoKeys,
+  fhirDocumentReferences,
+} from "../../../database/schema.js";
 import { eq } from "drizzle-orm";
+import {
+  FHIRDocumentReferenceResourceSchema,
+  type FHIRDocumentReferenceResource,
+} from "@mediqr/schemas";
 import { VaultCryptoService } from "../crypto/vault-crypto.service.js";
 import { StorageService } from "../storage/storage.service.js";
 import { ClamAvScannerService } from "./clamav-scanner.service.js";
@@ -162,6 +170,8 @@ export class DocumentScanWorker implements OnModuleInit, OnModuleDestroy {
         })
         .where(eq(documents.id, documentId));
 
+      await this.updateFhirReferenceStatus(documentId, "entered-in-error");
+
       await this.audit.log({
         actorId: undefined,
         actorRole: "system",
@@ -199,6 +209,8 @@ export class DocumentScanWorker implements OnModuleInit, OnModuleDestroy {
       })
       .where(eq(documents.id, documentId));
 
+    await this.updateFhirReferenceStatus(documentId, "final");
+
     await this.audit.log({
       actorId: undefined,
       actorRole: "system",
@@ -223,6 +235,8 @@ export class DocumentScanWorker implements OnModuleInit, OnModuleDestroy {
       })
       .where(eq(documents.id, documentId));
 
+    await this.updateFhirReferenceStatus(documentId, "entered-in-error");
+
     await this.audit.log({
       actorId: undefined,
       actorRole: "system",
@@ -232,6 +246,35 @@ export class DocumentScanWorker implements OnModuleInit, OnModuleDestroy {
       outcome: "FAILURE",
       ipHash: "00000000000000000000000000000000",
     });
+  }
+
+  private async updateFhirReferenceStatus(
+    documentId: string,
+    docStatus: "final" | "entered-in-error"
+  ): Promise<void> {
+    const [reference] = await db
+      .select({ resource: fhirDocumentReferences.resource })
+      .from(fhirDocumentReferences)
+      .where(eq(fhirDocumentReferences.documentId, documentId))
+      .limit(1);
+
+    if (!reference) {
+      throw new Error("FHIR DocumentReference not found for scanned document");
+    }
+
+    const resource = FHIRDocumentReferenceResourceSchema.parse(reference.resource);
+    const status: FHIRDocumentReferenceResource["status"] =
+      docStatus === "final" ? "current" : "entered-in-error";
+    const updatedResource = FHIRDocumentReferenceResourceSchema.parse({
+      ...resource,
+      status,
+      docStatus,
+    });
+
+    await db
+      .update(fhirDocumentReferences)
+      .set({ resource: updatedResource, updatedAt: new Date() })
+      .where(eq(fhirDocumentReferences.documentId, documentId));
   }
 
   async stop(): Promise<void> {

@@ -19,6 +19,7 @@ export const FHIRCodingSchema = z.object({
 
 export const FHIRCodeableConceptSchema = z.object({
   coding: z.array(FHIRCodingSchema),
+  text: z.string().optional(),
 });
 
 export const FHIRReferenceSchema = z.object({
@@ -40,8 +41,10 @@ export type FHIRPatientResource = z.infer<typeof FHIRPatientResourceSchema>;
 export const FHIRDocumentReferenceAttachmentSchema = z.object({
   contentType: z.string(),
   url: z.string().optional(),
+  size: z.number().int().nonnegative().optional(),
   hash: z.string().optional(),
   title: z.string(),
+  creation: z.string().datetime().optional(),
 });
 
 export const FHIRDocumentReferenceContentSchema = z.object({
@@ -51,14 +54,21 @@ export const FHIRDocumentReferenceContentSchema = z.object({
 export const FHIRDocumentReferenceResourceSchema = z.object({
   resourceType: z.literal("DocumentReference"),
   id: z.string(),
+  meta: z.object({ profile: z.array(z.string().url()) }).optional(),
+  extension: z
+    .array(z.object({ url: z.string().url(), valueString: z.string() }))
+    .optional(),
   status: z.enum(["current", "superseded", "entered-in-error"]),
-  docStatus: z.enum(["preliminary", "final", "amended"]).optional(),
+  docStatus: z
+    .enum(["preliminary", "final", "amended", "entered-in-error"])
+    .optional(),
   type: FHIRCodeableConceptSchema,
   category: z.array(FHIRCodeableConceptSchema).optional(),
   subject: FHIRReferenceSchema,
   date: z.string().datetime(),
   author: z.array(FHIRReferenceSchema).optional(),
   content: z.array(FHIRDocumentReferenceContentSchema),
+  securityLabel: z.array(FHIRCodeableConceptSchema).optional(),
 });
 export type FHIRDocumentReferenceResource = z.infer<
   typeof FHIRDocumentReferenceResourceSchema

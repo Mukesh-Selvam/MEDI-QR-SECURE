@@ -19,8 +19,9 @@
  */
 
 import { Injectable } from "@nestjs/common";
-import { randomUUID } from "crypto";
+import { FHIRDocumentReferenceResourceSchema } from "@mediqr/schemas";
 import type { Document } from "../../../database/schema.js";
+import type { FHIRDocumentReferenceResource } from "@mediqr/schemas";
 
 type DocumentType = "scan" | "lab" | "prescription" | "vaccination" | "discharge";
 type UploadSource = "patient-uploaded" | "facility-verified";
@@ -29,29 +30,6 @@ interface FhirCoding {
   system: string;
   code: string;
   display: string;
-}
-
-interface FhirDocumentReference {
-  resourceType: "DocumentReference";
-  id: string;
-  meta: { profile: string[] };
-  extension: Array<{ url: string; valueString: string }>;
-  status: "current" | "superseded" | "entered-in-error";
-  docStatus: "preliminary" | "final" | "amended" | "entered-in-error";
-  type: { coding: FhirCoding[]; text: string };
-  subject: { reference: string };
-  date: string;
-  author: Array<{ reference: string }>;
-  content: Array<{
-    attachment: {
-      contentType: string;
-      size: number;
-      hash: string;
-      title: "encrypted-document";
-      creation?: string;
-    };
-  }>;
-  securityLabel: Array<{ coding: FhirCoding[] }>;
 }
 
 const LOINC_MAP: Record<DocumentType, FhirCoding> = {
@@ -83,16 +61,19 @@ export class FhirDocumentMapper {
    * @param sha256Hex     - SHA-256 hex of plaintext file (from document_crypto_keys)
    * @returns             FHIR R4 DocumentReference object + fhirId to store in DB
    */
-  map(doc: Document, sha256Hex: string): { fhirId: string; resource: FhirDocumentReference } {
+  map(
+    doc: Document,
+    sha256Hex: string
+  ): { fhirId: string; resource: FHIRDocumentReferenceResource } {
     const fhirId = `MediQR-${doc.id}`;
     const loincCode = LOINC_MAP[doc.documentType as DocumentType];
     const securityLabel = SOURCE_SECURITY_LABEL[doc.uploadSource as UploadSource];
 
-    const resource: FhirDocumentReference = {
+    const resource = FHIRDocumentReferenceResourceSchema.parse({
       resourceType: "DocumentReference",
       id: fhirId,
       meta: {
-        profile: ["http://hl7.org/fhir/R4/documentreference.html"],
+        profile: ["http://hl7.org/fhir/StructureDefinition/DocumentReference"],
       },
       extension: [
         {
@@ -100,8 +81,18 @@ export class FhirDocumentMapper {
           valueString: doc.uploadSource,
         },
       ],
-      status: doc.status === "deleted" ? "superseded" : "current",
-      docStatus: doc.status === "ready" ? "final" : "preliminary",
+      status:
+        doc.status === "deleted"
+          ? "superseded"
+          : doc.status === "rejected"
+            ? "entered-in-error"
+            : "current",
+      docStatus:
+        doc.status === "ready"
+          ? "final"
+          : doc.status === "rejected"
+            ? "entered-in-error"
+            : "preliminary",
       type: {
         coding: [loincCode],
         text: loincCode.display,
@@ -133,7 +124,7 @@ export class FhirDocumentMapper {
           coding: [securityLabel],
         },
       ],
-    };
+    });
 
     return { fhirId, resource };
   }
