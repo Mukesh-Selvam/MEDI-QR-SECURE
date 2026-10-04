@@ -45,7 +45,7 @@ export class LocalKmsAdapter implements KmsAdapter, OnModuleInit {
   async wrapKey(dek: Buffer): Promise<WrappedKey> {
     // Generate a random 12-byte IV for wrapping
     const kiv = randomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", this.masterKey, kiv);
+    const cipher = createCipheriv("aes-256-gcm", this.masterKey, kiv, { authTagLength: 16 });
     const ct = Buffer.concat([cipher.update(dek), cipher.final()]);
     const at = cipher.getAuthTag();
 
@@ -74,7 +74,7 @@ export class LocalKmsAdapter implements KmsAdapter, OnModuleInit {
     const ct = Buffer.from(payload.ct, "hex");
     const at = Buffer.from(payload.at, "hex");
 
-    const decipher = createDecipheriv("aes-256-gcm", this.masterKey, kiv);
+    const decipher = createDecipheriv("aes-256-gcm", this.masterKey, kiv, { authTagLength: 16 });
     decipher.setAuthTag(at);
 
     const dek = Buffer.concat([decipher.update(ct), decipher.final()]);

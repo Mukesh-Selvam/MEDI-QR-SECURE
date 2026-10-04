@@ -72,7 +72,7 @@ export class VaultCryptoService {
     const ivBuf = randomBytes(12);
 
     // 4. Encrypt payload
-    const cipher = createCipheriv("aes-256-gcm", dek, ivBuf);
+    const cipher = createCipheriv("aes-256-gcm", dek, ivBuf, { authTagLength: 16 });
     const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
     const authTagBuf = cipher.getAuthTag();
 
@@ -107,7 +107,7 @@ export class VaultCryptoService {
     let plaintext: Buffer;
     try {
       // 2. AES-256-GCM decrypt (GCM auth tag check happens here)
-      const decipher = createDecipheriv("aes-256-gcm", dek, ivBuf);
+      const decipher = createDecipheriv("aes-256-gcm", dek, ivBuf, { authTagLength: 16 });
       decipher.setAuthTag(authTagBuf);
       plaintext = Buffer.concat([decipher.update(input.ciphertext), decipher.final()]);
     } catch {

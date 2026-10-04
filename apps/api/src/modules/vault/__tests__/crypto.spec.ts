@@ -15,7 +15,7 @@ import { LocalKmsAdapter } from "../kms/local-kms.adapter.js";
 
 const testEnv = vi.hoisted(() => ({
   NODE_ENV: "test" as string,
-  KMS_MASTER_KEY: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+  KMS_MASTER_KEY: Buffer.alloc(32, 0x01).toString("hex"),
 }));
 vi.mock("../../../config/env.js", () => ({ env: testEnv }));
 
@@ -76,6 +76,24 @@ describe("VaultCryptoService", () => {
     ).rejects.toMatchObject({ code: "TAMPER_DETECTED" });
   });
 
+  it("rejects truncated GCM authentication tags", async () => {
+    const encrypted = await svc.encrypt(Buffer.from("Authentication tag length test"));
+    const truncatedTag = Buffer.from(encrypted.authTag, "base64")
+      .subarray(0, 12)
+      .toString("base64");
+
+    await expect(
+      svc.decrypt({
+        ciphertext: encrypted.ciphertext,
+        wrappedDek: encrypted.wrappedDek,
+        kmsKeyId: encrypted.kmsKeyId,
+        iv: encrypted.iv,
+        authTag: truncatedTag,
+        sha256Plaintext: encrypted.sha256Plaintext,
+      })
+    ).rejects.toMatchObject({ code: "TAMPER_DETECTED" });
+  });
+
   it("rejects tampered SHA-256 hash even when ciphertext is valid (integrity check)", async () => {
     const plaintext = Buffer.from("Medical prescription content");
     const encrypted = await svc.encrypt(plaintext);
@@ -117,8 +135,7 @@ describe("VaultCryptoService", () => {
 
 describe("LocalKmsAdapter", () => {
   it("wraps and unwraps a DEK round-trip", async () => {
-    process.env["KMS_MASTER_KEY"] =
-      "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
+    process.env["KMS_MASTER_KEY"] = Buffer.alloc(32, 0x01).toString("hex");
     process.env["NODE_ENV"] = "development";
 
     const adapter = new LocalKmsAdapter();
@@ -132,6 +149,22 @@ describe("LocalKmsAdapter", () => {
 
     const unwrapped = await adapter.unwrapKey(wrapped.wrappedKey, wrapped.keyId);
     expect(unwrapped.equals(dek)).toBe(true);
+  });
+
+  it("rejects a truncated wrapped-key authentication tag", async () => {
+    process.env["KMS_MASTER_KEY"] = Buffer.alloc(32, 0x01).toString("hex");
+    process.env["NODE_ENV"] = "development";
+
+    const adapter = new LocalKmsAdapter();
+    adapter.onModuleInit();
+    const wrapped = await adapter.wrapKey(Buffer.from("wrapped key test"));
+    const payload = JSON.parse(Buffer.from(wrapped.wrappedKey, "base64").toString("utf8")) as {
+      at: string;
+    };
+    payload.at = Buffer.from(payload.at, "hex").subarray(0, 12).toString("hex");
+    const truncatedWrappedKey = Buffer.from(JSON.stringify(payload)).toString("base64");
+
+    await expect(adapter.unwrapKey(truncatedWrappedKey, wrapped.keyId)).rejects.toThrow();
   });
 
   it("refuses to initialize in production", () => {
