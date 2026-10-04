@@ -24,9 +24,10 @@ import { PUBLIC_ROUTE_KEY } from "../decorators/public.decorator.js";
 import type { AuthenticatedUser } from "../decorators/current-user.decorator.js";
 import { env } from "../../../config/env.js";
 import { db } from "../../../database/index.js";
-import { clinicians, users } from "../../../database/schema.js";
-import { eq } from "drizzle-orm";
+import { clinicians, sessions, users } from "../../../database/schema.js";
+import { and, eq, gt, isNull } from "drizzle-orm";
 import { verifyStaffAccessToken } from "../staff-token.js";
+import { createHash } from "crypto";
 
 const ACCESS_COOKIE = "__Host-mediqr-access";
 const STAFF_ROLES = new Set([
@@ -101,9 +102,28 @@ export class JwtAuthGuard implements CanActivate {
 
   private async resolvePatient(payload: JWTPayload): Promise<AuthenticatedUser> {
     const userId = payload["mediqr_user_id"];
-    if (typeof userId !== "string") {
-      throw new UnauthorizedException("Patient token has no local user identity");
+    const accessTokenId = payload.jti;
+    if (typeof userId !== "string" || typeof accessTokenId !== "string") {
+      throw new UnauthorizedException("Patient token has no active session identity");
     }
+    const accessTokenIdHash = createHash("sha256")
+      .update(accessTokenId)
+      .digest("hex");
+    const now = new Date();
+    const [session] = await db
+      .update(sessions)
+      .set({ lastActiveAt: now })
+      .where(
+        and(
+          eq(sessions.accessTokenIdHash, accessTokenIdHash),
+          eq(sessions.userId, userId),
+          isNull(sessions.revokedAt),
+          gt(sessions.expiresAt, now)
+        )
+      )
+      .returning({ id: sessions.id });
+    if (!session) throw new UnauthorizedException("Patient session is revoked or expired");
+
     const [user] = await db
       .select()
       .from(users)
@@ -119,6 +139,7 @@ export class JwtAuthGuard implements CanActivate {
       role: user.role,
       isVerified: true,
       facilityId: user.facilityId ?? undefined,
+      sessionId: session.id,
     };
   }
 

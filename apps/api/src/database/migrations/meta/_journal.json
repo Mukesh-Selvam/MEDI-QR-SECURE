@@ -22,6 +22,13 @@
       "when": 1791091779235,
       "tag": "0002_facility_patient_relationships",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791096668465,
+      "tag": "0003_enforce_patient_sessions",
+      "breakpoints": true
     }
   ]
 }

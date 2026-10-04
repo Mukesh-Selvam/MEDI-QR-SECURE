@@ -226,6 +226,7 @@ export const sessions = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    accessTokenIdHash: varchar("access_token_id_hash", { length: 64 }),
     refreshTokenHash: varchar("refresh_token_hash", { length: 64 }).notNull(),
     deviceInfo: varchar("device_info", { length: 255 }).default("Unknown Device"),
     ipAddress: varchar("ip_address", { length: 45 }).default("127.0.0.1"),
@@ -236,6 +237,7 @@ export const sessions = pgTable(
   },
   (table) => [
     index("sessions_user_id_idx").on(table.userId),
+    uniqueIndex("sessions_access_token_id_hash_idx").on(table.accessTokenIdHash),
     index("sessions_refresh_hash_idx").on(table.refreshTokenHash),
   ]
 );

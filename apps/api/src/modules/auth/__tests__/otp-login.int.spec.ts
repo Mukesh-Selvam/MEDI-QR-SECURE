@@ -42,8 +42,17 @@ describe("Patient OTP login (integration)", () => {
        from information_schema.columns
        where table_schema = $1 and
          ((table_name = $2 and column_name = $3) or
-          (table_name = $4 and column_name = $5))`,
-      ["public", "users", "facility_id", "patient_facility_relationships", "patient_id"]
+          (table_name = $4 and column_name = $5) or
+          (table_name = $6 and column_name = $7))`,
+      [
+        "public",
+        "users",
+        "facility_id",
+        "patient_facility_relationships",
+        "patient_id",
+        "sessions",
+        "access_token_id_hash",
+      ]
     );
     expect(
       columns.rows.map((row) => `${row.table_name}.${row.column_name}`)
@@ -51,6 +60,7 @@ describe("Patient OTP login (integration)", () => {
       expect.arrayContaining([
         "users.facility_id",
         "patient_facility_relationships.patient_id",
+        "sessions.access_token_id_hash",
       ])
     );
 
@@ -145,6 +155,9 @@ describe("Patient OTP login (integration)", () => {
     const body = JSON.parse(verifyResponse.body) as { csrfToken?: unknown };
     expect(typeof body.csrfToken).toBe("string");
 
+    const authenticatedCookies = cookieHeaders
+      .map((cookie) => cookie.split(";")[0])
+      .join("; ");
     const user = await db.query.users.findFirst({
       columns: { id: true },
       where: eq(users.phone, testPhone),
@@ -154,10 +167,18 @@ describe("Patient OTP login (integration)", () => {
     if (!userId) throw new Error("OTP verification did not provision a user.");
 
     const activeSessions = await db
-      .select({ id: sessions.id })
+      .select({
+        id: sessions.id,
+        lastActiveAt: sessions.lastActiveAt,
+        accessTokenIdHash: sessions.accessTokenIdHash,
+      })
       .from(sessions)
       .where(eq(sessions.userId, userId));
     expect(activeSessions).toHaveLength(1);
+    expect(activeSessions[0]?.accessTokenIdHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(activeSessions[0]?.lastActiveAt.getTime()).toBeGreaterThanOrEqual(
+      startedAt.getTime()
+    );
 
     const verifyAudits = await db
       .select({ id: auditEvents.id })
@@ -181,6 +202,19 @@ describe("Patient OTP login (integration)", () => {
         )
       );
     expect(sendAudits.length).toBeGreaterThan(0);
+
+    const sessionId = activeSessions[0]?.id;
+    if (!sessionId) throw new Error("OTP verification did not persist a session.");
+    await db
+      .update(sessions)
+      .set({ revokedAt: new Date() })
+      .where(eq(sessions.id, sessionId));
+    const revokedRequest = await fastify.inject({
+      method: "GET",
+      url: "/api/v1/auth/me",
+      headers: { cookie: authenticatedCookies },
+    });
+    expect(revokedRequest.statusCode).toBe(401);
   }, 90000);
 });
 

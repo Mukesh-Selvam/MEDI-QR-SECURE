@@ -16,6 +16,8 @@ export interface AuthenticatedUser {
   guardianWardIds?: string[];
   /** Facility ID for facility-admin / pharmacy-staff */
   facilityId?: string;
+  /** Active server-side session row, present for patient OTP sessions */
+  sessionId?: string;
 }
 
 export const CurrentUser = createParamDecorator(

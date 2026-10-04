@@ -293,15 +293,18 @@ export class AuthService implements OnModuleDestroy {
     // 7. Issue refresh token + session
     const refreshTokenRaw = randomBytes(64).toString("hex");
     const refreshTokenHash = sha256(refreshTokenRaw);
+    const accessTokenId = randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000); // 8 hours
 
-    await db.insert(sessions).values({
+    const [session] = await db.insert(sessions).values({
       userId: resolvedUser.id,
+      accessTokenIdHash: sha256(accessTokenId),
       refreshTokenHash,
       deviceInfo: userAgent.slice(0, 255),
       ipAddress: "hashed",
       expiresAt,
-    });
+    }).returning({ id: sessions.id });
+    if (!session) throw new Error("Failed to create patient session.");
 
     // 8. Mint short-lived access JWT (5 minutes)
     const accessToken = await new SignJWT({
@@ -310,6 +313,8 @@ export class AuthService implements OnModuleDestroy {
       facility_id: resolvedUser.facilityId,
     })
       .setProtectedHeader({ alg: "HS256" })
+      .setSubject(resolvedUser.id)
+      .setJti(accessTokenId)
       .setIssuedAt()
       .setExpirationTime("5m")
       .setIssuer("mediqr-api")
@@ -412,10 +417,12 @@ export class AuthService implements OnModuleDestroy {
 
     const newRefreshRaw = randomBytes(64).toString("hex");
     const newRefreshHash = sha256(newRefreshRaw);
+    const accessTokenId = randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
 
     await db.insert(sessions).values({
       userId: userRow.id,
+      accessTokenIdHash: sha256(accessTokenId),
       refreshTokenHash: newRefreshHash,
       deviceInfo: userAgent.slice(0, 255),
       ipAddress: "hashed",
@@ -428,6 +435,8 @@ export class AuthService implements OnModuleDestroy {
       facility_id: userRow.facilityId,
     })
       .setProtectedHeader({ alg: "HS256" })
+      .setSubject(userRow.id)
+      .setJti(accessTokenId)
       .setIssuedAt()
       .setExpirationTime("5m")
       .setIssuer("mediqr-api")
@@ -459,7 +468,12 @@ export class AuthService implements OnModuleDestroy {
     ipHash: string,
     reply: FastifyReply
   ): Promise<{ message: string }> {
-    if (refreshTokenRaw) {
+    if (user.sessionId) {
+      await db
+        .update(sessions)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(sessions.id, user.sessionId), isNull(sessions.revokedAt)));
+    } else if (refreshTokenRaw) {
       const hash = sha256(refreshTokenRaw);
       await db
         .update(sessions)
