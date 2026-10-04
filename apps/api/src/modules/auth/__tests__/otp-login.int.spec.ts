@@ -147,6 +147,7 @@ describe("Patient OTP login (integration)", () => {
       const cookie = cookiesByName.get(name) ?? "";
       expect(/;\s*Secure/i.test(cookie)).toBe(true);
       expect(/;\s*SameSite=Strict/i.test(cookie)).toBe(true);
+      expect(/;\s*Path=\/(?:;|$)/i.test(cookie)).toBe(true);
     }
     expect(/;\s*HttpOnly/i.test(cookiesByName.get("__Host-mediqr-access") ?? "")).toBe(true);
     expect(/;\s*HttpOnly/i.test(cookiesByName.get("__Host-mediqr-refresh") ?? "")).toBe(true);

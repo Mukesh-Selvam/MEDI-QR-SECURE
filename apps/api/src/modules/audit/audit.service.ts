@@ -28,10 +28,21 @@ export class AuditService {
     this.lastHash = await this.insertEvent(event, db);
   }
 
-  async logInTransaction(event: AuditEventInput): Promise<void> {
+  async logInTransaction(
+    event: AuditEventInput,
+    executor?: AuditInsertExecutor
+  ): Promise<string> {
+    if (executor) {
+      return this.insertEvent(event, executor);
+    }
     const integrityHash = await db.transaction((transaction) =>
       this.insertEvent(event, transaction)
     );
+    this.lastHash = integrityHash;
+    return integrityHash;
+  }
+
+  commitTransactionHash(integrityHash: string): void {
     this.lastHash = integrityHash;
   }
 

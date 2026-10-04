@@ -6,5 +6,5 @@ resourcePolicy:
   rules:
     # Any authenticated principal can read their own user info and log out
     - actions: ["read", "logout"]
-      roles: ["patient", "guardian", "clinician", "facility-admin", "platform-admin"]
+      roles: ["patient", "guardian", "clinician", "facility-admin", "pharmacy-staff", "platform-admin"]
       effect: EFFECT_ALLOW

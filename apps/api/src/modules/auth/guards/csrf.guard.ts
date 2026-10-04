@@ -34,10 +34,20 @@ export class CsrfGuard implements CanActivate {
       ctx.getHandler(),
       ctx.getClass(),
     ]);
-    if (isPublic) return true;
 
     const request = ctx.switchToHttp().getRequest<FastifyRequest>();
     if (!STATE_CHANGING_METHODS.has(request.method)) return true;
+
+    if (isPublic) {
+      const origin = request.headers.origin;
+      const allowedOrigins = env.CORS_ALLOWED_ORIGINS.split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+      if (origin && !allowedOrigins.includes(origin)) {
+        throw new ForbiddenException("Cross-origin authentication request denied");
+      }
+      if (!request.url.endsWith("/auth/refresh")) return true;
+    }
 
     const cookieRaw =
       (request.cookies as Record<string, string | undefined>)[CSRF_COOKIE];

@@ -185,6 +185,21 @@ describe("Keycloak staff MFA (integration)", () => {
     );
   }, 30000);
 
+  it("defines every staff role as a realm role", async () => {
+    const response = await keycloakRequest(`/admin/realms/${realm}/roles`);
+    expect(response.status).toBe(200);
+    const roles = (await response.json()) as KeycloakRole[];
+    const names = roles.map((role) => role.name);
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "clinician",
+        "facility-admin",
+        "pharmacy-staff",
+        "platform-admin",
+      ])
+    );
+  }, 30000);
+
   async function keycloakRequest(
     path: string,
     init: RequestInit = {}

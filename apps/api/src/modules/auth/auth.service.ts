@@ -559,7 +559,6 @@ export class AuthService implements OnModuleDestroy {
 
     reply.setCookie(REFRESH_COOKIE, refreshToken, {
       ...baseOpts,
-      path: "/api/v1/auth",
       maxAge: 28800, // 8 hours
     });
 
@@ -574,7 +573,7 @@ export class AuthService implements OnModuleDestroy {
 
   private clearCookies(reply: FastifyReply): void {
     reply.clearCookie(ACCESS_COOKIE, { path: "/" });
-    reply.clearCookie(REFRESH_COOKIE, { path: "/api/v1/auth" });
+    reply.clearCookie(REFRESH_COOKIE, { path: "/" });
     reply.clearCookie(CSRF_COOKIE, { path: "/" });
   }
 }
