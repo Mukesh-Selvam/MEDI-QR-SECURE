@@ -10,10 +10,7 @@ out
 .turbo
 
 # Environment variables (strict zero-leak)
-.env
-.env.local
-.env.production
-.env.development
+.env*
 !.env.example
 
 # OS and IDE files

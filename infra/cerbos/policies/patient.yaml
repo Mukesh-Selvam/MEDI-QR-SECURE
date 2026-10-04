@@ -1,0 +1,54 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: patient
+  version: default
+  rules:
+    # Patients can manage their own profile
+    - actions: ["read", "update"]
+      roles: ["patient", "guardian"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: request.resource.attr.owner_id == request.principal.id
+
+    # Guardians can view ward records (guardianship enforced by API before reaching PDP)
+    - actions: ["read"]
+      roles: ["guardian"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: >
+            request.principal.attr.guardian_ward_ids.exists(wardId, wardId == request.resource.attr.owner_id)
+
+    # Verified clinicians can read patient records (access grant enforced by API)
+    - actions: ["read"]
+      roles: ["clinician"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.principal.attr.is_verified == true
+              - expr: request.principal.attr.has_access_grant == true
+
+    # Unverified clinicians are DENIED (explicit deny before allow fallthrough)
+    - actions: ["*"]
+      roles: ["clinician"]
+      effect: EFFECT_DENY
+      condition:
+        match:
+          expr: request.principal.attr.is_verified == false
+
+    # Facility admins can manage patient records within their facility
+    - actions: ["read", "update"]
+      roles: ["facility-admin"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: request.principal.attr.facility_id == request.resource.attr.facility_id
+
+    # Platform admins have full access
+    - actions: ["*"]
+      roles: ["platform-admin"]
+      effect: EFFECT_ALLOW

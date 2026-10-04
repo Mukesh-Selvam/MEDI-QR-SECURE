@@ -1,4 +1,5 @@
 import React from "react";
+import Link from "next/link";
 import { HealthIdCard } from "@mediqr/ui";
 import { Button } from "@mediqr/ui";
 import { Badge } from "@mediqr/ui";
@@ -71,16 +72,20 @@ export default function HomePage() {
           </nav>
 
           <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              className="hidden sm:inline-flex"
-            >
-              Verify Health ID
-            </Button>
-            <Button variant="coral" size="sm">
-              Emergency SOS
-            </Button>
+            <Link href="/login/patient">
+              <Button
+                variant="outline"
+                size="sm"
+                className="hidden sm:inline-flex"
+              >
+                Patient OTP Login
+              </Button>
+            </Link>
+            <Link href="/login/clinician">
+              <Button variant="coral" size="sm">
+                Clinician Portal
+              </Button>
+            </Link>
           </div>
         </div>
       </header>
@@ -140,12 +145,16 @@ export default function HomePage() {
 
               {/* Action Buttons */}
               <div className="flex flex-wrap items-center gap-4 pt-4">
-                <Button variant="primary" size="lg" className="px-8">
-                  Enter Patient Vault
-                </Button>
-                <Button variant="outline" size="lg">
-                  Clinician Scan Console
-                </Button>
+                <Link href="/login/patient">
+                  <Button variant="primary" size="lg" className="px-8">
+                    Enter Patient Vault
+                  </Button>
+                </Link>
+                <Link href="/login/clinician">
+                  <Button variant="outline" size="lg">
+                    Clinician Scan Console
+                  </Button>
+                </Link>
               </div>
             </div>
 

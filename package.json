@@ -12,7 +12,13 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,css}\"",
     "clean": "turbo run clean && rimraf node_modules",
-    "prepare": "husky || true"
+    "prepare": "husky || true",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "infra:stop": "docker compose stop",
+    "infra:start": "docker compose start",
+    "infra:ps": "docker compose ps",
+    "infra:logs": "docker compose logs"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.7.1",

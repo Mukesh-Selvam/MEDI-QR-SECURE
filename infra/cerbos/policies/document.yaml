@@ -1,0 +1,87 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: document
+  version: default
+  rules:
+    # -----------------------------------------------------------------------
+    # Patient and guardian: own documents only
+    # Every document displayed prominently shows its sourceLabel
+    # (verified-source | patient-uploaded)
+    # -----------------------------------------------------------------------
+    - actions: ["read", "create", "delete"]
+      roles: ["patient", "guardian"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: request.resource.attr.owner_id == request.principal.id
+
+    # Guardian can also read ward documents
+    - actions: ["read"]
+      roles: ["guardian"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: >
+            request.principal.attr.guardian_ward_ids.exists(wardId, wardId == request.resource.attr.owner_id)
+
+    # -----------------------------------------------------------------------
+    # Facility staff: can upload facility-verified documents for patients
+    # they have an active relationship or consent with.
+    # Cannot read documents (read access requires consent — Phase 3).
+    # -----------------------------------------------------------------------
+    - actions: ["create"]
+      roles: ["facility-admin", "pharmacy-staff"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.principal.attr.facility_id != ""
+              - expr: request.principal.attr.has_patient_relationship == true
+
+    # -----------------------------------------------------------------------
+    # Clinicians: DENIED by default until Phase 3 adds explicit consent grant.
+    # -----------------------------------------------------------------------
+    - actions: ["read", "create", "delete"]
+      roles: ["clinician"]
+      effect: EFFECT_DENY
+
+    # Explicit deny for unverified clinicians (belt-and-suspenders)
+    - actions: ["*"]
+      roles: ["clinician"]
+      effect: EFFECT_DENY
+      condition:
+        match:
+          expr: request.principal.attr.is_verified == false
+
+    # Verified clinicians with consent grant (Phase 3 — currently always denied above)
+    - actions: ["read"]
+      roles: ["clinician"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.principal.attr.is_verified == true
+              - expr: request.principal.attr.has_consent_grant == true
+
+    # -----------------------------------------------------------------------
+    # Pharmacy staff: prescriptions only, with active grant
+    # -----------------------------------------------------------------------
+    - actions: ["read"]
+      roles: ["pharmacy-staff"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.resource.attr.document_type == "prescription"
+              - expr: request.principal.attr.has_access_grant == true
+
+    # -----------------------------------------------------------------------
+    # Platform admins: full access
+    # -----------------------------------------------------------------------
+    - actions: ["*"]
+      roles: ["platform-admin"]
+      effect: EFFECT_ALLOW

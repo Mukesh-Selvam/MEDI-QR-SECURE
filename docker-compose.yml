@@ -1,0 +1,5 @@
+# Root Docker Compose orchestrator for MediQR platform
+# Automatically loads the repo-root .env and delegates to infra/docker/docker-compose.yml
+
+include:
+  - path: infra/docker/docker-compose.yml

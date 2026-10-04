@@ -1,6 +1,20 @@
+/**
+ * MediQR Health Check Probes
+ * ==========================
+ * Every function in this file MUST perform a real network call.
+ * Returning a hard-coded "ok" without making the call is a hard violation.
+ *
+ * Each probe:
+ *  - Reads config from the validated `env` object (never raw process.env)
+ *  - Races real I/O against a 2-second AbortSignal / timer
+ *  - Returns {status:"error", detail:"<human-readable message>"} on failure
+ *  - Returns {status:"ok", latencyMs:<n>} on success
+ */
+
 import net from "net";
 import { Client as PgClient } from "pg";
-import Redis from "ioredis";
+import { Redis } from "ioredis";
+import { env } from "../../config/env.js";
 import {
   CheckResult,
   ReadinessResult,
@@ -8,7 +22,7 @@ import {
 } from "./health.types.js";
 
 // ---------------------------------------------------------------------------
-// Generic timeout helper: races a real I/O promise against a hard deadline.
+// Generic timeout helper
 // ---------------------------------------------------------------------------
 async function withTimeout<T>(
   operation: (signal: AbortSignal) => Promise<T>,
@@ -17,11 +31,42 @@ async function withTimeout<T>(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const result = await operation(controller.signal);
-    return result;
+    return await operation(controller.signal);
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Robust error message extractor (handles AggregateError & missing message)
+// ---------------------------------------------------------------------------
+function extractErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error) {
+    const anyErr = err as Error & { code?: string; cause?: unknown; errors?: unknown[] };
+    const code = anyErr.code;
+    const msg = anyErr.message?.trim();
+    if (code && msg) return `${code}: ${msg}`;
+    if (code) return code;
+    if (msg) return msg;
+
+    if (Array.isArray(anyErr.errors) && anyErr.errors.length > 0) {
+      const parts = anyErr.errors
+        .map((e) =>
+          e instanceof Error
+            ? (e as { code?: string }).code || e.message
+            : String(e)
+        )
+        .filter(Boolean);
+      if (parts.length > 0) return parts.join("; ");
+    }
+
+    if (anyErr.cause) {
+      return extractErrorMessage(anyErr.cause, fallback);
+    }
+
+    return err.name || fallback;
+  }
+  return String(err) || fallback;
 }
 
 // ---------------------------------------------------------------------------
@@ -30,27 +75,31 @@ async function withTimeout<T>(
 export async function checkDatabase(): Promise<CheckResult> {
   const start = Date.now();
   const client = new PgClient({
-    host: process.env["DB_HOST"] ?? "localhost",
-    port: Number(process.env["DB_PORT"] ?? 5432),
-    database: process.env["DB_NAME"] ?? "mediqr_db",
-    user: process.env["DB_USER"] ?? "mediqr_user",
-    password: process.env["DB_PASSWORD"] ?? "",
+    host: env.DB_HOST,
+    port: env.DB_PORT,
+    database: env.DB_NAME,
+    user: env.DB_USER,
+    password: env.DB_PASSWORD, // always a non-empty string — validated by Zod
     connectionTimeoutMillis: HEALTH_CHECK_TIMEOUT_MS,
     statement_timeout: HEALTH_CHECK_TIMEOUT_MS,
     query_timeout: HEALTH_CHECK_TIMEOUT_MS,
+    ssl: env.DB_SSL_ENABLED ? { rejectUnauthorized: true } : false,
   });
 
   try {
     await withTimeout(async (signal) => {
       const connectPromise = client.connect();
-      signal.addEventListener("abort", () => client.end(), { once: true });
+      signal.addEventListener("abort", () => void client.end(), { once: true });
       await connectPromise;
       await client.query("SELECT 1");
     }, HEALTH_CHECK_TIMEOUT_MS);
 
     return { status: "ok", latencyMs: Date.now() - start };
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = extractErrorMessage(
+      err,
+      `Database connection failed on ${env.DB_HOST}:${env.DB_PORT}`
+    );
     return { status: "error", latencyMs: Date.now() - start, detail: message };
   } finally {
     await client.end().catch(() => undefined);
@@ -63,15 +112,15 @@ export async function checkDatabase(): Promise<CheckResult> {
 export async function checkRedis(): Promise<CheckResult> {
   const start = Date.now();
   const client = new Redis({
-    host: process.env["REDIS_HOST"] ?? "localhost",
-    port: Number(process.env["REDIS_PORT"] ?? 6379),
-    password: process.env["REDIS_PASSWORD"] ?? undefined,
+    host: env.REDIS_HOST,
+    port: env.REDIS_PORT,
+    password: env.REDIS_PASSWORD || undefined,
     connectTimeout: HEALTH_CHECK_TIMEOUT_MS,
     commandTimeout: HEALTH_CHECK_TIMEOUT_MS,
     lazyConnect: true,
     enableOfflineQueue: false,
     maxRetriesPerRequest: 0,
-    retryStrategy: () => null, // no retries — fail fast
+    retryStrategy: () => null, // fail fast, no retries
   });
 
   try {
@@ -82,12 +131,17 @@ export async function checkRedis(): Promise<CheckResult> {
       });
       await connectPromise;
       const pong = await client.ping();
-      if (pong !== "PONG") throw new Error(`Unexpected Redis response: ${pong}`);
+      if (pong !== "PONG") {
+        throw new Error(`Unexpected Redis response: ${pong}`);
+      }
     }, HEALTH_CHECK_TIMEOUT_MS);
 
     return { status: "ok", latencyMs: Date.now() - start };
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = extractErrorMessage(
+      err,
+      `Redis connection failed on ${env.REDIS_HOST}:${env.REDIS_PORT}`
+    );
     return { status: "error", latencyMs: Date.now() - start, detail: message };
   } finally {
     await client.quit().catch(() => client.disconnect());
@@ -95,120 +149,120 @@ export async function checkRedis(): Promise<CheckResult> {
 }
 
 // ---------------------------------------------------------------------------
-// 3. MinIO / S3 — HEAD bucket with 2-second timeout (no AWS SDK needed)
+// 3. MinIO / S3 — GET /minio/health/live with 2-second timeout
 // ---------------------------------------------------------------------------
 export async function checkStorage(): Promise<CheckResult> {
   const start = Date.now();
-  const endpoint = process.env["STORAGE_ENDPOINT"] ?? "localhost";
-  const port = process.env["STORAGE_PORT"] ?? "9000";
-  const accessKey = process.env["STORAGE_ACCESS_KEY"] ?? "";
-  const secretKey = process.env["STORAGE_SECRET_KEY"] ?? "";
-  const bucket = process.env["STORAGE_BUCKET_DOCUMENTS"] ?? "mediqr-documents";
-  const useSSL = process.env["STORAGE_USE_SSL"] === "true";
-  const scheme = useSSL ? "https" : "http";
-
-  const url = `${scheme}://${endpoint}:${port}/${bucket}`;
-
-  // Build AWS Signature V4 — auth header required for MinIO even on HEAD
-  // We use a simplified approach: hit the MinIO health endpoint first, then
-  // the bucket endpoint with pre-signed auth.
-  const healthUrl = `${scheme}://${endpoint}:${port}/minio/health/live`;
+  const scheme = env.STORAGE_USE_SSL ? "https" : "http";
+  const healthUrl = `${scheme}://${env.STORAGE_ENDPOINT}:${env.STORAGE_PORT}/minio/health/live`;
 
   try {
     const { default: fetch } = await import("node-fetch");
 
     await withTimeout(async (signal) => {
-      const res = await fetch(healthUrl, {
-        method: "GET",
-        // @ts-expect-error node-fetch uses its own AbortSignal shape
-        signal: signal as unknown,
-      });
-      if (!res.ok && res.status !== 403) {
-        // 403 = auth required but server is alive (expected for bucket HEAD)
-        throw new Error(
-          `MinIO health check returned HTTP ${res.status}: ${url}`
-        );
+      let res: Awaited<ReturnType<typeof fetch>>;
+      try {
+        res = await fetch(healthUrl, {
+          method: "GET",
+          signal: signal as unknown as Parameters<typeof fetch>[1] extends { signal?: infer S } ? S : never,
+        });
+      } catch (fetchErr: unknown) {
+        // node-fetch wraps the OS error — extract the root cause code if present
+        let msg: string;
+        if (fetchErr instanceof Error) {
+          const cause = (fetchErr as Error & { cause?: unknown }).cause;
+          const causeDetail = cause ? extractErrorMessage(cause, "") : "";
+          const base = fetchErr.message.replace(/,\s*reason:\s*$/, "").trim();
+          msg = causeDetail ? `${base} (${causeDetail})` : base;
+        } else {
+          msg = String(fetchErr);
+        }
+        throw new Error(`MinIO unreachable at ${healthUrl} — ${msg}`);
       }
-    }, HEALTH_CHECK_TIMEOUT_MS);
 
-    // Second pass — HEAD the bucket endpoint to confirm the bucket exists
-    await withTimeout(async (signal) => {
-      const date = new Date().toUTCString();
-      const res = await fetch(url, {
-        method: "HEAD",
-        headers: {
-          Date: date,
-          Authorization: `AWS ${accessKey}:${secretKey}`,
-        },
-        // @ts-expect-error node-fetch AbortSignal
-        signal: signal as unknown,
-      });
-      // 200 = exists, 403 = auth error but server alive, 404 = bucket missing
-      if (res.status !== 200 && res.status !== 403 && res.status !== 404) {
-        throw new Error(`MinIO bucket HEAD returned unexpected HTTP ${res.status}`);
+      // MinIO /minio/health/live returns 200 when healthy
+      if (!res.ok) {
+        throw new Error(
+          `MinIO health endpoint ${healthUrl} returned HTTP ${res.status} ${res.statusText}`
+        );
       }
     }, HEALTH_CHECK_TIMEOUT_MS);
 
     return { status: "ok", latencyMs: Date.now() - start };
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = extractErrorMessage(
+      err,
+      `MinIO connection failed on ${healthUrl}`
+    );
     return { status: "error", latencyMs: Date.now() - start, detail: message };
   }
 }
 
 // ---------------------------------------------------------------------------
-// 4. ClamAV — PING/PONG over TCP socket with 2-second timeout
+// 4. ClamAV — zPING/PONG over TCP socket with 2-second timeout
+//
+// Fix: the previous implementation could resolve with detail="" when the socket
+// closed before either the PONG check or the error handler ran. Now we use a
+// single promise that tracks the definitive resolution reason.
 // ---------------------------------------------------------------------------
 export async function checkScanner(): Promise<CheckResult> {
   const start = Date.now();
-  const host = process.env["CLAMAV_HOST"] ?? "localhost";
-  const port = Number(process.env["CLAMAV_PORT"] ?? 3310);
 
   return new Promise<CheckResult>((resolve) => {
+    let settled = false;
+    let responseData = "";
+
+    function done(result: CheckResult) {
+      if (!settled) {
+        settled = true;
+        socket.destroy();
+        clearTimeout(timer);
+        resolve(result);
+      }
+    }
+
     const timer = setTimeout(() => {
-      socket.destroy();
-      resolve({
+      done({
         status: "error",
         latencyMs: Date.now() - start,
-        detail: `ClamAV PING timed out after ${HEALTH_CHECK_TIMEOUT_MS}ms`,
+        detail: `ClamAV did not respond within ${HEALTH_CHECK_TIMEOUT_MS}ms — host: ${env.CLAMAV_HOST}:${env.CLAMAV_PORT}`,
       });
     }, HEALTH_CHECK_TIMEOUT_MS);
 
     const socket = new net.Socket();
-    let responseData = "";
 
-    socket.connect(port, host, () => {
-      // ClamAV protocol: send "zPING\0" for zero-terminated command
+    socket.connect(env.CLAMAV_PORT, env.CLAMAV_HOST, () => {
+      // ClamAV protocol: null-terminated PING command
       socket.write("zPING\0");
     });
 
     socket.on("data", (data) => {
       responseData += data.toString();
-      // ClamAV responds with "PONG\0"
       if (responseData.includes("PONG")) {
-        clearTimeout(timer);
-        socket.destroy();
-        resolve({ status: "ok", latencyMs: Date.now() - start });
+        done({ status: "ok", latencyMs: Date.now() - start });
       }
     });
 
-    socket.on("error", (err) => {
-      clearTimeout(timer);
-      socket.destroy();
-      resolve({
+    socket.on("error", (err: NodeJS.ErrnoException) => {
+      const detail = [err.code, err.message].filter(Boolean).join(": ") ||
+        `connection failed to ${env.CLAMAV_HOST}:${env.CLAMAV_PORT}`;
+      done({
         status: "error",
         latencyMs: Date.now() - start,
-        detail: err.message,
+        detail: `ClamAV TCP error on ${env.CLAMAV_HOST}:${env.CLAMAV_PORT} — ${detail}`,
       });
     });
 
-    socket.on("close", () => {
-      clearTimeout(timer);
-      if (!responseData.includes("PONG")) {
-        resolve({
+    socket.on("close", (hadError) => {
+      if (!settled) {
+        // Socket closed without PONG and without a preceding error event
+        const reason = hadError
+          ? "connection closed with error (no error event fired)"
+          : `connection closed by ClamAV without PONG — partial response: "${responseData.trim() || "<empty>"}"`;
+        done({
           status: "error",
           latencyMs: Date.now() - start,
-          detail: "ClamAV connection closed without PONG",
+          detail: `ClamAV ${env.CLAMAV_HOST}:${env.CLAMAV_PORT} — ${reason}`,
         });
       }
     });
@@ -216,7 +270,7 @@ export async function checkScanner(): Promise<CheckResult> {
 }
 
 // ---------------------------------------------------------------------------
-// Aggregate: run all 4 checks in parallel, return structured ReadinessResult
+// Aggregate: run all 4 checks in parallel, return ReadinessResult
 // ---------------------------------------------------------------------------
 export async function runAllChecks(): Promise<ReadinessResult> {
   const start = Date.now();
@@ -229,10 +283,8 @@ export async function runAllChecks(): Promise<ReadinessResult> {
   ]);
 
   const checks = { database, redis, storage, scanner };
-  const failing = (
-    Object.entries(checks) as [string, CheckResult][]
-  )
-    .filter(([, result]) => result.status !== "ok")
+  const failing = (Object.entries(checks) as [string, CheckResult][])
+    .filter(([, r]) => r.status !== "ok")
     .map(([name]) => name);
 
   return {

@@ -1,4 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Mock the env module BEFORE any other import that transitively reads it.
+// This prevents the module-level side-effect (dotenv load + process.exit)
+// from firing during unit tests.
+vi.mock("../../config/env.js", () => ({
+  env: {
+    NODE_ENV: "test",
+    DB_HOST: "127.0.0.1",
+    DB_PORT: 5432,
+    DB_NAME: "mediqr_test",
+    DB_USER: "mediqr_user",
+    DB_PASSWORD: "testpassword",
+    DB_SSL_ENABLED: false,
+    DB_MAX_CONNECTIONS: 5,
+    REDIS_HOST: "127.0.0.1",
+    REDIS_PORT: 6379,
+    REDIS_PASSWORD: undefined,
+    STORAGE_ENDPOINT: "127.0.0.1",
+    STORAGE_PORT: 9000,
+    STORAGE_USE_SSL: false,
+    STORAGE_ACCESS_KEY: "minioadmin",
+    STORAGE_SECRET_KEY: "minioadmin",
+    STORAGE_BUCKET_DOCUMENTS: "mediqr-documents",
+    CLAMAV_HOST: "127.0.0.1",
+    CLAMAV_PORT: 3310,
+  },
+}));
+
 import { HealthController } from "./health.controller.js";
 import * as checks from "./health.checks.js";
 import type { CheckResult, ReadinessResult } from "./health.types.js";
@@ -238,65 +266,76 @@ describe("Real-call enforcement — checks MUST attempt actual I/O", () => {
   } as const;
 
   it("checkDatabase() returns error when Postgres port is closed (not a stub)", async () => {
-    process.env["DB_HOST"] = "127.0.0.1";
-    process.env["DB_PORT"] = String(REFUSED_PORT.db);
-    process.env["DB_PASSWORD"] = "irrelevant";
+    // The vi.mock above provides env. For the anti-stub tests we update the mock
+    // to use a refused port so the real TCP call fails.
+    const envMod = await import("../../config/env.js");
+    const mutableEnv = envMod.env as Record<string, unknown>;
+    mutableEnv["DB_HOST"] = "127.0.0.1";
+    mutableEnv["DB_PORT"] = REFUSED_PORT.db;
+    mutableEnv["DB_PASSWORD"] = "irrelevant";
 
     const { checkDatabase } = await import("./health.checks.js");
     const result: CheckResult = await checkDatabase();
 
     expect(result.status).toBe("error");
     expect(result.detail).toBeDefined();
+    expect(result.detail!.length).toBeGreaterThan(0);
     expect(result.latencyMs).toBeDefined();
   }, 5000);
 
   it("checkRedis() returns error when Redis port is closed (not a stub)", async () => {
-    process.env["REDIS_HOST"] = "127.0.0.1";
-    process.env["REDIS_PORT"] = String(REFUSED_PORT.redis);
-    process.env["REDIS_PASSWORD"] = "";
+    const envMod = await import("../../config/env.js");
+    const mutableEnv = envMod.env as Record<string, unknown>;
+    mutableEnv["REDIS_HOST"] = "127.0.0.1";
+    mutableEnv["REDIS_PORT"] = REFUSED_PORT.redis;
 
     const { checkRedis } = await import("./health.checks.js");
     const result: CheckResult = await checkRedis();
 
     expect(result.status).toBe("error");
     expect(result.detail).toBeDefined();
+    expect(result.detail!.length).toBeGreaterThan(0);
     expect(result.latencyMs).toBeDefined();
   }, 5000);
 
   it("checkStorage() returns error when MinIO port is closed (not a stub)", async () => {
-    process.env["STORAGE_ENDPOINT"] = "127.0.0.1";
-    process.env["STORAGE_PORT"] = String(REFUSED_PORT.minio);
-    process.env["STORAGE_USE_SSL"] = "false";
+    const envMod = await import("../../config/env.js");
+    const mutableEnv = envMod.env as Record<string, unknown>;
+    mutableEnv["STORAGE_ENDPOINT"] = "127.0.0.1";
+    mutableEnv["STORAGE_PORT"] = REFUSED_PORT.minio;
+    mutableEnv["STORAGE_USE_SSL"] = false;
 
     const { checkStorage } = await import("./health.checks.js");
     const result: CheckResult = await checkStorage();
 
     expect(result.status).toBe("error");
     expect(result.detail).toBeDefined();
+    expect(result.detail!.length).toBeGreaterThan(0);
     expect(result.latencyMs).toBeDefined();
   }, 5000);
 
   it("checkScanner() returns error when ClamAV port is closed (not a stub)", async () => {
-    process.env["CLAMAV_HOST"] = "127.0.0.1";
-    process.env["CLAMAV_PORT"] = String(REFUSED_PORT.clamav);
+    const envMod = await import("../../config/env.js");
+    const mutableEnv = envMod.env as Record<string, unknown>;
+    mutableEnv["CLAMAV_HOST"] = "127.0.0.1";
+    mutableEnv["CLAMAV_PORT"] = REFUSED_PORT.clamav;
 
     const { checkScanner } = await import("./health.checks.js");
     const result: CheckResult = await checkScanner();
 
     expect(result.status).toBe("error");
     expect(result.detail).toBeDefined();
+    expect(result.detail!.length).toBeGreaterThan(0); // never empty string
     expect(result.latencyMs).toBeDefined();
   }, 5000);
 
   it("runAllChecks() returns degraded with all checks named when all ports closed", async () => {
-    process.env["DB_HOST"] = "127.0.0.1";
-    process.env["DB_PORT"] = String(REFUSED_PORT.db);
-    process.env["REDIS_HOST"] = "127.0.0.1";
-    process.env["REDIS_PORT"] = String(REFUSED_PORT.redis);
-    process.env["STORAGE_ENDPOINT"] = "127.0.0.1";
-    process.env["STORAGE_PORT"] = String(REFUSED_PORT.minio);
-    process.env["CLAMAV_HOST"] = "127.0.0.1";
-    process.env["CLAMAV_PORT"] = String(REFUSED_PORT.clamav);
+    const envMod = await import("../../config/env.js");
+    const mutableEnv = envMod.env as Record<string, unknown>;
+    mutableEnv["DB_PORT"] = REFUSED_PORT.db;
+    mutableEnv["REDIS_PORT"] = REFUSED_PORT.redis;
+    mutableEnv["STORAGE_PORT"] = REFUSED_PORT.minio;
+    mutableEnv["CLAMAV_PORT"] = REFUSED_PORT.clamav;
 
     const { runAllChecks } = await import("./health.checks.js");
     const result: ReadinessResult = await runAllChecks();
@@ -309,5 +348,7 @@ describe("Real-call enforcement — checks MUST attempt actual I/O", () => {
     expect(result.checks.redis.status).toBe("error");
     expect(result.checks.storage.status).toBe("error");
     expect(result.checks.scanner.status).toBe("error");
+    // Scanner detail must never be empty
+    expect(result.checks.scanner.detail!.length).toBeGreaterThan(0);
   }, 12000);
 });

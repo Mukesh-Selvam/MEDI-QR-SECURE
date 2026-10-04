@@ -1,0 +1,10 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: auth
+  version: default
+  rules:
+    # Any authenticated principal can read their own user info and log out
+    - actions: ["read", "logout"]
+      roles: ["patient", "guardian", "clinician", "facility-admin", "platform-admin"]
+      effect: EFFECT_ALLOW

@@ -1,0 +1,26 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: clinician
+  version: default
+  rules:
+    # Clinicians can read and update their own profile
+    - actions: ["read", "update"]
+      roles: ["clinician"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: request.resource.attr.owner_id == request.principal.id
+
+    # Facility admins can view clinicians in their facility
+    - actions: ["read", "verify"]
+      roles: ["facility-admin"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: request.principal.attr.facility_id == request.resource.attr.facility_id
+
+    # Platform admins have full access including verify/suspend
+    - actions: ["*"]
+      roles: ["platform-admin"]
+      effect: EFFECT_ALLOW

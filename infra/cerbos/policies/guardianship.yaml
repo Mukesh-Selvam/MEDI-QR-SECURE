@@ -1,0 +1,21 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: guardianship
+  version: default
+  rules:
+    # Guardians can view their own guardianship links
+    - actions: ["read"]
+      roles: ["guardian", "patient"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          any:
+            of:
+              - expr: request.resource.attr.guardian_id == request.principal.id
+              - expr: request.resource.attr.ward_id == request.principal.id
+
+    # Platform admins can manage all guardianships
+    - actions: ["*"]
+      roles: ["platform-admin"]
+      effect: EFFECT_ALLOW

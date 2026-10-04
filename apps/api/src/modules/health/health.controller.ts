@@ -8,6 +8,7 @@ import {
 import { ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import type { FastifyReply } from "fastify";
 import { runAllChecks } from "./health.checks.js";
+import { PublicRoute } from "../auth/decorators/public.decorator.js";
 
 @ApiTags("Health")
 @Controller("health")
@@ -17,6 +18,7 @@ export class HealthController {
    * Intentionally does NOT check external dependencies.
    * Kubernetes/load-balancers use this to detect a crashed process.
    */
+  @PublicRoute()
   @Get()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Liveness probe — process is alive" })
@@ -41,6 +43,7 @@ export class HealthController {
    *   storage  → MinIO /minio/health/live + HEAD bucket (2 s timeout)
    *   scanner  → ClamAV zPING / PONG on TCP socket (2 s timeout)
    */
+  @PublicRoute()
   @Get("ready")
   @ApiOperation({ summary: "Readiness probe — real dependency checks" })
   @ApiResponse({ status: 200, description: "All backing services reachable" })

@@ -1,3 +1,5 @@
+name: mediqr
+
 services:
   # 1. PostgreSQL 16 (Relational Store with Row Level Security & PGCrypto)
   postgres:
@@ -7,14 +9,16 @@ services:
     environment:
       POSTGRES_DB: ${DB_NAME:-mediqr_db}
       POSTGRES_USER: ${DB_USER:-mediqr_user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-mediqr_secure_dev_password_do_not_use_in_prod}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required. Set it in .env}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init-extensions.sql:/docker-entrypoint-initdb.d/init-extensions.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-mediqr_user} -d ${DB_NAME:-mediqr_db}"]
+      test: ["CMD-SHELL", "PGPASSWORD=\"$${POSTGRES_PASSWORD}\" pg_isready -U ${DB_USER:-mediqr_user} -d ${DB_NAME:-mediqr_db} -h 127.0.0.1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -24,58 +28,68 @@ services:
     image: redis:7-alpine
     container_name: mediqr-redis
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-mediqr_redis_dev_password}"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required. Set it in .env}"]
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-mediqr_redis_dev_password}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD is required. Set it in .env}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   # 3. MinIO (S3-Compatible Object Storage for Encrypted Document Vault)
   minio:
-    image: minio/minio:latest
+    image: cgr.dev/chainguard/minio@sha256:4cf4831a2bbcf13ddca09c1cbcc9faff716dd3c4247e0babc32864b8ee8e0034
     container_name: mediqr-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY:-mediqr_minio_admin}
-      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_KEY:-mediqr_minio_dev_secret_key_change_me}
+      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_KEY:?STORAGE_SECRET_KEY is required. Set it in .env}
     ports:
-      - "${STORAGE_PORT:-9000}:9000"
-      - "9001:9001"
+      - "127.0.0.1:${STORAGE_PORT:-9000}:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # MinIO Bucket Auto-Provisioner
+  # MinIO Bucket Auto-Provisioner (Shell-free distroless execution)
   minio-init:
-    image: minio/mc:latest
+    image: cgr.dev/chainguard/minio-client@sha256:b20bdc339b3f2596c8f731793f861d2445fd13a9a3cfb517ff020969f4e4bf71
     container_name: mediqr-minio-init
     depends_on:
       minio:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      /usr/bin/mc alias set local http://minio:9000 ${STORAGE_ACCESS_KEY:-mediqr_minio_admin} ${STORAGE_SECRET_KEY:-mediqr_minio_dev_secret_key_change_me};
-      /usr/bin/mc mb --ignore-existing local/${STORAGE_BUCKET_DOCUMENTS:-mediqr-documents};
-      exit 0;
-      "
+    entrypoint: ["mc"]
+    command: ["mb", "--ignore-existing", "local/${STORAGE_BUCKET_DOCUMENTS:-mediqr-documents}"]
+    environment:
+      MC_HOST_local: "http://${STORAGE_ACCESS_KEY:-mediqr_minio_admin}:${STORAGE_SECRET_KEY:?STORAGE_SECRET_KEY is required. Set it in .env}@minio:9000"
+
+  # MinIO Quarantine Bucket Provisioner (antivirus staging area)
+  minio-init-quarantine:
+    image: cgr.dev/chainguard/minio-client@sha256:b20bdc339b3f2596c8f731793f861d2445fd13a9a3cfb517ff020969f4e4bf71
+    container_name: mediqr-minio-init-quarantine
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    entrypoint: ["mc"]
+    command: ["mb", "--ignore-existing", "local/${STORAGE_BUCKET_QUARANTINE:-mediqr-quarantine}"]
+    environment:
+      MC_HOST_local: "http://${STORAGE_ACCESS_KEY:-mediqr_minio_admin}:${STORAGE_SECRET_KEY:?STORAGE_SECRET_KEY is required. Set it in .env}@minio:9000"
 
   # 4. ClamAV (Antivirus Daemon for Document Upload Sanitization)
   clamav:
-    image: clamav/clamav:latest
+    image: clamav/clamav:1.5.4
     container_name: mediqr-clamav
     restart: unless-stopped
     ports:
-      - "${CLAMAV_PORT:-3310}:3310"
+      - "127.0.0.1:${CLAMAV_PORT:-3310}:3310"
     volumes:
       - clamav_data:/var/lib/clamav
     healthcheck:
@@ -92,37 +106,57 @@ services:
     command: start-dev --import-realm
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-mediqr_keycloak_admin_password}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD is required. Set it in .env}
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
     healthcheck:
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep 'HTTP/1.1 200 OK' || exit 0"]
       interval: 15s
       timeout: 10s
       retries: 5
 
+  # 8. Cerbos PDP (Policy Decision Point — deny-by-default authorization)
+  cerbos:
+    image: ghcr.io/cerbos/cerbos:0.42.0
+    container_name: mediqr-cerbos
+    restart: unless-stopped
+    command: server --config=/config/config.yaml
+    volumes:
+      - ../cerbos/config.yaml:/config/config.yaml:ro
+      - ../cerbos/policies:/policies:ro
+    ports:
+      - "127.0.0.1:3592:3592"  # HTTP
+      - "127.0.0.1:3593:3593"  # gRPC
+    healthcheck:
+      test: ["CMD", "/cerbos", "healthcheck", "--config=/config/config.yaml"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # 6. Mailpit (Mock SMTP Server & Webmail Inspector)
   mailpit:
-    image: axllent/mailpit:latest
+    image: axllent/mailpit:v1.31.4
     container_name: mediqr-mailpit
     restart: unless-stopped
     ports:
-      - "${SMTP_PORT:-1025}:1025"
-      - "8025:8025"
+      - "127.0.0.1:${SMTP_PORT:-1025}:1025"
+      - "127.0.0.1:8025:8025"
 
   # 7. OpenTelemetry Collector (Trace, Metric & Audit Ingestion)
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector-contrib:0.161.0
     container_name: mediqr-otel
     restart: unless-stopped
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
       - ./otel/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
-      - "4317:4317" # OTLP gRPC
-      - "4318:4318" # OTLP HTTP
+      - "127.0.0.1:4317:4317" # OTLP gRPC
+      - "127.0.0.1:4318:4318" # OTLP HTTP
 
 volumes:
   postgres_data:
