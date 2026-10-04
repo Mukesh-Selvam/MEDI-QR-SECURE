@@ -10,6 +10,28 @@ resourcePolicy:
       condition:
         match:
           expr: request.principal.attr.is_verified == true
+    - actions: ["approve-with-otp"]
+      roles: ["clinician"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: request.principal.attr.is_verified == true
+    - actions: ["list"]
+      roles: ["patient", "guardian"]
+      effect: EFFECT_ALLOW
+    - actions: ["read", "approve", "deny", "issue-otp"]
+      roles: ["patient"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: request.resource.attr.owner_id == request.principal.id
+    - actions: ["read", "approve", "deny", "issue-otp"]
+      roles: ["guardian"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: >
+            request.principal.attr.guardian_ward_ids.exists(wardId, wardId == request.resource.attr.owner_id)
     - actions: ["*"]
       roles: ["clinician"]
       effect: EFFECT_DENY

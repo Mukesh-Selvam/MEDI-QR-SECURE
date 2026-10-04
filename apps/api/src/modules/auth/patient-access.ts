@@ -2,6 +2,7 @@ import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "../../database/index.js";
 import {
+  accessRequests,
   documents,
   guardianships,
   patientFacilityRelationships,
@@ -48,6 +49,18 @@ export async function findDocumentPatientOwner(
   return document ? findPatientOwner(document.patientId) : undefined;
 }
 
+export async function findAccessRequestPatientOwner(
+  requestId: string
+): Promise<PatientOwner | undefined> {
+  const [request] = await db
+    .select({ patientId: accessRequests.patientId })
+    .from(accessRequests)
+    .where(eq(accessRequests.id, requestId))
+    .limit(1);
+
+  return request ? findPatientOwner(request.patientId) : undefined;
+}
+
 export async function findGuardianWardOwnerIds(guardianUserId: string): Promise<string[]> {
   const validAt = new Date();
   const wardRows = await db
@@ -67,6 +80,29 @@ export async function findGuardianWardOwnerIds(guardianUserId: string): Promise<
     );
 
   return [...new Set(wardRows.map(({ ownerUserId }) => ownerUserId))];
+}
+
+export async function findGuardianWardPatientIds(
+  guardianUserId: string
+): Promise<string[]> {
+  const validAt = new Date();
+  const wardRows = await db
+    .select({ patientId: wardPatients.id })
+    .from(guardianships)
+    .innerJoin(
+      guardianPatients,
+      eq(guardianships.guardianPatientId, guardianPatients.id)
+    )
+    .innerJoin(wardPatients, eq(guardianships.wardPatientId, wardPatients.id))
+    .where(
+      and(
+        eq(guardianPatients.userId, guardianUserId),
+        eq(guardianships.verificationStatus, "verified"),
+        or(isNull(guardianships.validUntil), gt(guardianships.validUntil, validAt))
+      )
+    );
+
+  return [...new Set(wardRows.map(({ patientId }) => patientId))];
 }
 
 export async function isVerifiedGuardianOfPatient(

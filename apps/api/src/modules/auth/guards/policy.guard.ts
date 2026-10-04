@@ -20,6 +20,7 @@ import type { FastifyRequest } from "fastify";
 import { env } from "../../../config/env.js";
 import {
   findDocumentPatientOwner,
+  findAccessRequestPatientOwner,
   findGuardianWardOwnerIds,
   findPatientOwner,
   findPatientOwnerByUserId,
@@ -82,9 +83,9 @@ export class PolicyGuard implements CanActivate {
         (policy.action === "read" || policy.action === "logout");
       const verifiedClinicianRequest =
         policy.resource === "access-request" &&
-        policy.action === "create" &&
         user.role === "clinician" &&
-        user.isVerified === true;
+        user.isVerified === true &&
+        (policy.action === "create" || policy.action === "approve-with-otp");
       if (
         user.role === "clinician" &&
         !clinicianSessionAction &&
@@ -115,6 +116,17 @@ export class PolicyGuard implements CanActivate {
           : await findPatientOwnerByUserId(user.id);
         if (!patient) {
           throw new ForbiddenException("Patient record not found");
+        }
+      }
+
+      if (
+        policy.resource === "access-request" &&
+        !["create", "list"].includes(policy.action) &&
+        params?.id
+      ) {
+        patient = await findAccessRequestPatientOwner(params.id);
+        if (!patient) {
+          throw new ForbiddenException("Access request not found");
         }
       }
 
