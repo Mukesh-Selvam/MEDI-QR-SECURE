@@ -18,6 +18,18 @@ import { PUBLIC_ROUTE_KEY } from "../decorators/public.decorator.js";
 import type { AuthenticatedUser } from "../decorators/current-user.decorator.js";
 import type { FastifyRequest } from "fastify";
 import { env } from "../../../config/env.js";
+import { db } from "../../../database/index.js";
+import { documents, guardianships, patients } from "../../../database/schema.js";
+import { and, eq, gt, isNull, or } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
+
+const guardianPatients = alias(patients, "guardian_patient");
+const wardPatients = alias(patients, "ward_patient");
+
+interface ResolvedPatient {
+  id: string;
+  ownerUserId: string;
+}
 
 @Injectable()
 export class PolicyGuard implements CanActivate {
@@ -59,10 +71,29 @@ export class PolicyGuard implements CanActivate {
       throw new ForbiddenException("Unauthenticated");
     }
 
-    const resourceId =
-      (request.params as Record<string, string>)?.id ?? "system";
+    const params = request.params as Record<string, string> | undefined;
+    const resourceId = params?.id ?? params?.patientId ?? "system";
 
     try {
+      if (user.role === "clinician") {
+        throw new ForbiddenException(
+          "Clinician access is unavailable until Phase 3 consent is implemented"
+        );
+      }
+
+      let patient: ResolvedPatient | undefined;
+      if (policy.resource === "document" && policy.action === "read") {
+        patient = await this.resolveReadPatient(params);
+        if (!patient) {
+          throw new ForbiddenException("Document or patient record not found");
+        }
+      }
+
+      const guardianWardIds =
+        user.role === "guardian"
+          ? await this.loadGuardianWardOwnerIds(user.id)
+          : [];
+
       const decision = await this.cerbos.checkResource({
         principal: {
           id: user.id,
@@ -70,7 +101,7 @@ export class PolicyGuard implements CanActivate {
           attributes: {
             is_verified: user.isVerified ?? false,
             has_access_grant: false,
-            guardian_ward_ids: user.guardianWardIds ?? [],
+            guardian_ward_ids: guardianWardIds,
             facility_id: user.facilityId ?? "",
           },
         },
@@ -78,7 +109,8 @@ export class PolicyGuard implements CanActivate {
           kind: policy.resource,
           id: resourceId,
           attributes: {
-            owner_id: resourceId,
+            owner_id: patient?.ownerUserId ?? "",
+            ...(patient ? { patient_id: patient.id } : {}),
           },
         },
         actions: [policy.action],
@@ -101,5 +133,51 @@ export class PolicyGuard implements CanActivate {
         "Authorization policy engine unavailable (fail-closed)"
       );
     }
+  }
+
+  private async resolveReadPatient(
+    params: Record<string, string> | undefined
+  ): Promise<ResolvedPatient | undefined> {
+    let patientId = params?.patientId;
+
+    if (!patientId && params?.id) {
+      const [document] = await db
+        .select({ patientId: documents.patientId })
+        .from(documents)
+        .where(eq(documents.id, params.id))
+        .limit(1);
+      patientId = document?.patientId;
+    }
+
+    if (!patientId) return undefined;
+
+    const [patient] = await db
+      .select({ id: patients.id, ownerUserId: patients.userId })
+      .from(patients)
+      .where(eq(patients.id, patientId))
+      .limit(1);
+
+    return patient;
+  }
+
+  private async loadGuardianWardOwnerIds(guardianUserId: string): Promise<string[]> {
+    const validAt = new Date();
+    const wardRows = await db
+      .select({ ownerUserId: wardPatients.userId })
+      .from(guardianships)
+      .innerJoin(
+        guardianPatients,
+        eq(guardianships.guardianPatientId, guardianPatients.id)
+      )
+      .innerJoin(wardPatients, eq(guardianships.wardPatientId, wardPatients.id))
+      .where(
+        and(
+          eq(guardianPatients.userId, guardianUserId),
+          eq(guardianships.verificationStatus, "verified"),
+          or(isNull(guardianships.validUntil), gt(guardianships.validUntil, validAt))
+        )
+      );
+
+    return [...new Set(wardRows.map(({ ownerUserId }) => ownerUserId))];
   }
 }

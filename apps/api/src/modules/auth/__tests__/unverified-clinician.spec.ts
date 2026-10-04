@@ -82,93 +82,45 @@ describe("PolicyGuard — Clinician Verification & Fail-Closed (Conditions 5 & 9
     await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
   });
 
-  it("Condition 9: unverified clinician (is_verified: false) is strictly DENIED access to patient data", async () => {
+  it("denies unverified clinicians access to patient data before consulting Cerbos", async () => {
     const unverifiedClinician: AuthenticatedUser = {
       id: "clinician-unverified-uuid",
       sub: "clinician-sub",
       role: "clinician",
       isVerified: false,
     };
-
-    // Cerbos returns isAllowed = false for unverified clinician
-    mockCheckResource.mockResolvedValueOnce({
-      isAllowed: vi.fn().mockReturnValue(false),
-    });
 
     const ctx = createMockContext(reflector, unverifiedClinician, {
       resource: "patient",
       action: "read",
     });
 
-    await expect(guard.canActivate(ctx)).rejects.toThrow(
-      /Access denied: clinician cannot perform 'read' on 'patient'/i
-    );
-
-    expect(mockCheckResource).toHaveBeenCalledWith(
-      expect.objectContaining({
-        principal: expect.objectContaining({
-          id: unverifiedClinician.id,
-          roles: ["clinician"],
-          attributes: expect.objectContaining({
-            is_verified: false,
-          }),
-        }),
-        resource: expect.objectContaining({
-          kind: "patient",
-        }),
-      })
-    );
+    await expect(guard.canActivate(ctx)).rejects.toThrow(/until Phase 3 consent/i);
+    expect(mockCheckResource).not.toHaveBeenCalled();
   });
 
-  it("Condition 9: unverified clinician is strictly DENIED access to document records", async () => {
+  it("denies verified clinicians access to document records until Phase 3 consent exists", async () => {
     const unverifiedClinician: AuthenticatedUser = {
       id: "clinician-unverified-uuid",
       sub: "clinician-sub",
       role: "clinician",
       isVerified: false,
     };
-
-    mockCheckResource.mockResolvedValueOnce({
-      isAllowed: vi.fn().mockReturnValue(false),
-    });
 
     const ctx = createMockContext(reflector, unverifiedClinician, {
       resource: "document",
       action: "read",
     });
 
-    await expect(guard.canActivate(ctx)).rejects.toThrow(
-      /Access denied: clinician cannot perform 'read' on 'document'/i
-    );
-  });
-
-  it("permits access for verified clinician when policy grants access", async () => {
-    const verifiedClinician: AuthenticatedUser = {
-      id: "clinician-verified-uuid",
-      sub: "clinician-sub",
-      role: "clinician",
-      isVerified: true,
-    };
-
-    mockCheckResource.mockResolvedValueOnce({
-      isAllowed: vi.fn().mockReturnValue(true),
-    });
-
-    const ctx = createMockContext(reflector, verifiedClinician, {
-      resource: "patient",
-      action: "read",
-    });
-
-    const result = await guard.canActivate(ctx);
-    expect(result).toBe(true);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(/until Phase 3 consent/i);
+    expect(mockCheckResource).not.toHaveBeenCalled();
   });
 
   it("Condition 5: fails closed (returns 403 Forbidden) if policy engine is unreachable or errors", async () => {
-    const clinician: AuthenticatedUser = {
-      id: "clinician-uuid",
-      sub: "clinician-sub",
-      role: "clinician",
-      isVerified: true,
+    const patient: AuthenticatedUser = {
+      id: "patient-uuid",
+      sub: "patient-sub",
+      role: "patient",
     };
 
     // Simulate PDP connection drop / gRPC network error
@@ -176,7 +128,7 @@ describe("PolicyGuard — Clinician Verification & Fail-Closed (Conditions 5 & 9
       new Error("connect ECONNREFUSED 127.0.0.1:3593")
     );
 
-    const ctx = createMockContext(reflector, clinician, {
+    const ctx = createMockContext(reflector, patient, {
       resource: "patient",
       action: "read",
     });
