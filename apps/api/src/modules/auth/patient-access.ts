@@ -3,6 +3,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { db } from "../../database/index.js";
 import {
   accessRequests,
+  consents,
   documents,
   guardianships,
   patientFacilityRelationships,
@@ -59,6 +60,39 @@ export async function findAccessRequestPatientOwner(
     .limit(1);
 
   return request ? findPatientOwner(request.patientId) : undefined;
+}
+
+export async function findConsentResource(
+  consentId: string
+): Promise<
+  | {
+      patient: PatientOwner;
+      granteeUserId: string;
+      status: string;
+      expiresAt: Date;
+    }
+  | undefined
+> {
+  const [consent] = await db
+    .select({
+      id: patients.id,
+      userId: patients.userId,
+      granteeUserId: consents.granteeUserId,
+      status: consents.status,
+      expiresAt: consents.expiresAt,
+    })
+    .from(consents)
+    .innerJoin(patients, eq(consents.patientId, patients.id))
+    .where(eq(consents.id, consentId))
+    .limit(1);
+  if (!consent) return undefined;
+
+  return {
+    patient: { id: consent.id, userId: consent.userId },
+    granteeUserId: consent.granteeUserId,
+    status: consent.status,
+    expiresAt: consent.expiresAt,
+  };
 }
 
 export async function findGuardianWardOwnerIds(guardianUserId: string): Promise<string[]> {

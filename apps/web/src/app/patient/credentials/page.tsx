@@ -148,6 +148,12 @@ export default function PatientCredentialsPage() {
           The QR contains only an opaque access credential. It never includes your name,
           Health ID, or medical records.
         </p>
+        <Link
+          href="/patient/access"
+          className="mt-4 inline-flex min-h-11 items-center rounded-lg border border-[#4A1D3F] px-4 py-2 text-sm font-semibold text-[#4A1D3F] underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E8735A]"
+        >
+          Review access requests
+        </Link>
       </header>
 
       {error && (

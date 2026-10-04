@@ -30,6 +30,11 @@ characters. Session, JWT, and HMAC secrets must meet the minimum lengths in
 `apps/api/src/config/env.ts`. The imported `mediqr-web` Keycloak client is
 configured as a public client using the authorization-code flow with PKCE; the
 API does not use a Keycloak client secret or service account.
+Patient approval creates a scoped clinician consent that expires after
+`ACCESS_CONSENT_TTL_HOURS` (24 hours by default, configurable from 1 to 168).
+Patients and verified guardians can review pending requests and revoke an
+active consent from `/patient/access`. In-person approval codes expire after
+two minutes and are single-use.
 
 Start the development infrastructure, including Postgres, Redis, MinIO,
 ClamAV, Mailpit, and Keycloak:

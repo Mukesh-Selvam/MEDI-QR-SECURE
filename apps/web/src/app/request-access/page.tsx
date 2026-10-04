@@ -33,6 +33,10 @@ export default function RequestAccessPage() {
   const [selectedScopes, setSelectedScopes] = useState<string[]>([]);
   const [requestId, setRequestId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [otp, setOtp] = useState("");
+  const [otpSubmitting, setOtpSubmitting] = useState(false);
+  const [otpError, setOtpError] = useState<string | null>(null);
+  const [approvalComplete, setApprovalComplete] = useState(false);
 
   useEffect(() => {
     const fragment = new URLSearchParams(window.location.hash.slice(1));
@@ -134,6 +138,50 @@ export default function RequestAccessPage() {
     }
   };
 
+  const confirmWithOtp = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!requestId || !/^\d{6}$/.test(otp)) {
+      setOtpError("Enter the six-digit code shown by the patient.");
+      return;
+    }
+    const csrfToken = readCookie("__Host-mediqr-csrf");
+    if (!csrfToken) {
+      setOtpError("Your secure session expired. Sign in again to continue.");
+      return;
+    }
+
+    setOtpSubmitting(true);
+    setOtpError(null);
+    try {
+      const response = await fetch(
+        `/api/v1/access/requests/${requestId}/approve-with-otp`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-csrf-token": csrfToken,
+          },
+          body: JSON.stringify({ code: otp }),
+          cache: "no-store",
+        }
+      );
+      if (!response.ok) {
+        setOtpError(
+          response.status === 403
+            ? "Only the clinician who requested access can confirm this code."
+            : "This code is incorrect, expired, or already used. Ask the patient to create a new code."
+        );
+        return;
+      }
+      setOtp("");
+      setApprovalComplete(true);
+    } catch {
+      setOtpError("The code could not be checked. Please retry.");
+    } finally {
+      setOtpSubmitting(false);
+    }
+  };
+
   const isVerifiedClinician =
     staffSession?.role === "clinician" && staffSession.isVerified;
 
@@ -159,10 +207,44 @@ export default function RequestAccessPage() {
         )}
 
         {requestId ? (
-          <p className="mt-6 rounded-lg bg-emerald-50 p-4 text-sm text-emerald-900">
-            Request submitted. The patient must approve the requested purpose and scope before
-            any record can be viewed.
-          </p>
+          <div className="mt-6 rounded-xl border border-[#EEDBCE] bg-[#FFFDFC] p-5 dark:border-[#493A4A] dark:bg-[#322936]">
+            {approvalComplete ? (
+              <p role="status" className="text-sm font-semibold text-[#244332] dark:text-[#D4E9DB]">
+                Patient approval confirmed. The consent is now active for the requested scope.
+              </p>
+            ) : (
+              <>
+                <p role="status" className="text-sm font-semibold">
+                  Request sent. Waiting for the patient to review it.
+                </p>
+                <p className="mt-2 text-sm leading-6 text-[#554653] dark:text-[#D4C6D2]">
+                  If the patient is with you, ask them to create an in-person confirmation code and enter it below. Codes expire quickly and work once.
+                </p>
+                {otpError && <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">{otpError}</p>}
+                <form onSubmit={(event) => void confirmWithOtp(event)} className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <label className="block flex-1 text-sm font-semibold">
+                    Patient&apos;s six-digit code
+                    <input
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      pattern="[0-9]{6}"
+                      maxLength={6}
+                      value={otp}
+                      onChange={(event) => setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                      className="mt-2 min-h-12 w-full rounded-lg border border-[#BBA5B4] bg-white px-3 font-mono text-lg tracking-[0.2em] text-[#2B2230] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E8735A] dark:border-[#6C586C] dark:bg-[#211923] dark:text-white"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={otpSubmitting || otp.length !== 6}
+                    className="min-h-12 rounded-lg bg-[#4A1D3F] px-5 font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E8735A] disabled:opacity-60 dark:bg-[#E8735A] dark:text-[#2B2230]"
+                  >
+                    {otpSubmitting ? "Checking code…" : "Confirm approval"}
+                  </button>
+                </form>
+              </>
+            )}
+          </div>
         ) : isVerifiedClinician && resolutionId ? (
           <form onSubmit={(event) => void createRequest(event)} className="mt-6 space-y-5">
             <label className="block text-sm font-semibold">

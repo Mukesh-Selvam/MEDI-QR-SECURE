@@ -31,6 +31,12 @@ export class AccessRequestApprovalController {
     return this.approvals.listPending(user);
   }
 
+  @Get("history")
+  @RequirePolicy({ resource: "access-request", action: "list" })
+  listHistory(@CurrentUser() user: AuthenticatedUser) {
+    return this.approvals.listHistory(user);
+  }
+
   @Post(":id/approve")
   @RequirePolicy({ resource: "access-request", action: "approve" })
   approve(

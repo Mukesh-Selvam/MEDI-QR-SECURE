@@ -21,6 +21,7 @@ import { env } from "../../../config/env.js";
 import {
   findDocumentPatientOwner,
   findAccessRequestPatientOwner,
+  findConsentResource,
   findGuardianWardOwnerIds,
   findPatientOwner,
   findPatientOwnerByUserId,
@@ -86,10 +87,16 @@ export class PolicyGuard implements CanActivate {
         user.role === "clinician" &&
         user.isVerified === true &&
         (policy.action === "create" || policy.action === "approve-with-otp");
+      const verifiedClinicianConsentRead =
+        policy.resource === "consent" &&
+        policy.action === "read" &&
+        user.role === "clinician" &&
+        user.isVerified === true;
       if (
         user.role === "clinician" &&
         !clinicianSessionAction &&
-        !verifiedClinicianRequest
+        !verifiedClinicianRequest &&
+        !verifiedClinicianConsentRead
       ) {
         throw new ForbiddenException(
           "Clinician access is unavailable without an approved consent"
@@ -97,6 +104,9 @@ export class PolicyGuard implements CanActivate {
       }
 
       let patient: ResolvedPatient | undefined;
+      let consentResource:
+        | Awaited<ReturnType<typeof findConsentResource>>
+        | undefined;
       if (
         policy.resource === "document" &&
         (policy.action === "read" || policy.action === "create")
@@ -129,6 +139,17 @@ export class PolicyGuard implements CanActivate {
           throw new ForbiddenException("Access request not found");
         }
       }
+      if (
+        policy.resource === "consent" &&
+        ["read", "revoke"].includes(policy.action) &&
+        params?.id
+      ) {
+        consentResource = await findConsentResource(params.id);
+        patient = consentResource?.patient;
+        if (!patient || !consentResource) {
+          throw new ForbiddenException("Consent not found");
+        }
+      }
 
       const guardianWardIds =
         user.role === "guardian"
@@ -159,6 +180,13 @@ export class PolicyGuard implements CanActivate {
           attributes: {
             owner_id: patient?.userId ?? "",
             ...(patient ? { patient_id: patient.id } : {}),
+            ...(consentResource
+              ? {
+                  grantee_id: consentResource.granteeUserId,
+                  status: consentResource.status,
+                  expires_at: consentResource.expiresAt.toISOString(),
+                }
+              : {}),
           },
         },
         actions: [policy.action],

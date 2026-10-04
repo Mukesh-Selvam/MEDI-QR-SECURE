@@ -7,15 +7,17 @@ import {
   Injectable,
 } from "@nestjs/common";
 import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
-import { and, eq, gt, inArray, isNull, or } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Redis } from "ioredis";
 import { z } from "zod";
 import { db } from "../../database/index.js";
 import {
   accessRequests,
+  auditEvents,
   clinicians,
   consents,
+  documents,
   guardianships,
   patients,
 } from "../../database/schema.js";
@@ -53,19 +55,44 @@ export class AccessRequestApprovalService {
 
   async listPending(user: AuthenticatedUser) {
     let patientIds: string[];
+    let wards: { id: string; label: string }[];
     if (user.role === "patient") {
       const patient = await findPatientOwnerByUserId(user.id);
       patientIds = patient ? [patient.id] : [];
+      wards = patient ? [{ id: patient.id, label: "Your record" }] : [];
     } else if (user.role === "guardian") {
-      patientIds = await findGuardianWardPatientIds(user.id);
+      wards = await db
+        .select({ id: wardPatients.id, label: wardPatients.fullName })
+        .from(guardianships)
+        .innerJoin(
+          guardianPatients,
+          eq(guardianships.guardianPatientId, guardianPatients.id)
+        )
+        .innerJoin(wardPatients, eq(guardianships.wardPatientId, wardPatients.id))
+        .where(
+          and(
+            eq(guardianPatients.userId, user.id),
+            eq(guardianships.verificationStatus, "verified"),
+            or(isNull(guardianships.validUntil), gt(guardianships.validUntil, new Date()))
+          )
+        );
+      patientIds = wards.map(({ id }) => id);
     } else {
       throw new ForbiddenException("Patient or guardian session is required");
     }
 
-    if (patientIds.length === 0) return [];
-    return db
+    if (patientIds.length === 0) {
+      return {
+        wards,
+        requests: [],
+        consentDurationHours: env.ACCESS_CONSENT_TTL_HOURS,
+      };
+    }
+    const requests = await db
       .select({
         id: accessRequests.id,
+        patientId: accessRequests.patientId,
+        patientLabel: patients.fullName,
         clinicianName: clinicians.fullName,
         purpose: accessRequests.purpose,
         scope: accessRequests.scope,
@@ -76,6 +103,7 @@ export class AccessRequestApprovalService {
         clinicians,
         eq(accessRequests.clinicianUserId, clinicians.userId)
       )
+      .innerJoin(patients, eq(accessRequests.patientId, patients.id))
       .where(
         and(
           inArray(accessRequests.patientId, patientIds),
@@ -83,6 +111,71 @@ export class AccessRequestApprovalService {
         )
       )
       .orderBy(accessRequests.createdAt);
+    return {
+      wards,
+      requests,
+      consentDurationHours: env.ACCESS_CONSENT_TTL_HOURS,
+    };
+  }
+
+  async listHistory(user: AuthenticatedUser) {
+    let patientIds: string[];
+    if (user.role === "patient") {
+      const patient = await findPatientOwnerByUserId(user.id);
+      patientIds = patient ? [patient.id] : [];
+    } else if (user.role === "guardian") {
+      patientIds = await findGuardianWardPatientIds(user.id);
+    } else {
+      throw new ForbiddenException("Patient or guardian session is required");
+    }
+    if (patientIds.length === 0) return { requests: [], reads: [] };
+
+    const requests = await db
+      .select({
+        id: accessRequests.id,
+        patientId: accessRequests.patientId,
+        patientLabel: patients.fullName,
+        clinicianName: clinicians.fullName,
+        purpose: accessRequests.purpose,
+        scope: accessRequests.scope,
+        requestStatus: accessRequests.status,
+        requestedAt: accessRequests.createdAt,
+        consentId: consents.id,
+        consentStatus: consents.status,
+        consentExpiresAt: consents.expiresAt,
+        consentRevokedAt: consents.revokedAt,
+      })
+      .from(accessRequests)
+      .innerJoin(patients, eq(accessRequests.patientId, patients.id))
+      .innerJoin(
+        clinicians,
+        eq(accessRequests.clinicianUserId, clinicians.userId)
+      )
+      .leftJoin(consents, eq(consents.accessRequestId, accessRequests.id))
+      .where(inArray(accessRequests.patientId, patientIds))
+      .orderBy(desc(accessRequests.createdAt));
+    const reads = await db
+      .select({
+        id: auditEvents.id,
+        clinicianName: clinicians.fullName,
+        documentType: documents.documentType,
+        viewedAt: auditEvents.timestamp,
+      })
+      .from(auditEvents)
+      .innerJoin(
+        documents,
+        sql`${auditEvents.resourceId} = ${documents.id}::text`
+      )
+      .innerJoin(clinicians, eq(auditEvents.actorId, clinicians.userId))
+      .where(
+        and(
+          eq(auditEvents.action, "DOCUMENT_VIEWED"),
+          eq(auditEvents.actorRole, "clinician"),
+          inArray(documents.patientId, patientIds)
+        )
+      )
+      .orderBy(desc(auditEvents.timestamp));
+    return { requests, reads };
   }
 
   async approve(
