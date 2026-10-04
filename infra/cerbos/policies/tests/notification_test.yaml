@@ -1,0 +1,62 @@
+name: NotificationTestSuite
+description: Users may list and update only their own notifications
+
+principals:
+  patient_a:
+    id: patient-a
+    roles: ["patient"]
+  guardian_a:
+    id: guardian-a
+    roles: ["guardian"]
+
+resources:
+  own_patient_notification:
+    kind: notification
+    id: notification-a
+    attr:
+      owner_id: patient-a
+  other_notification:
+    kind: notification
+    id: notification-b
+    attr:
+      owner_id: patient-b
+  own_guardian_notification:
+    kind: notification
+    id: notification-c
+    attr:
+      owner_id: guardian-a
+
+tests:
+  - name: Patient can list and update only their own notifications
+    input:
+      principals: [patient_a]
+      resources: [own_patient_notification, other_notification]
+      actions: [list, update]
+    expected:
+      - principal: patient_a
+        resource: own_patient_notification
+        actions:
+          list: EFFECT_ALLOW
+          update: EFFECT_ALLOW
+      - principal: patient_a
+        resource: other_notification
+        actions:
+          list: EFFECT_DENY
+          update: EFFECT_DENY
+
+  - name: Guardian can list and update only their own notifications
+    input:
+      principals: [guardian_a]
+      resources: [own_guardian_notification, other_notification]
+      actions: [list, update]
+    expected:
+      - principal: guardian_a
+        resource: own_guardian_notification
+        actions:
+          list: EFFECT_ALLOW
+          update: EFFECT_ALLOW
+      - principal: guardian_a
+        resource: other_notification
+        actions:
+          list: EFFECT_DENY
+          update: EFFECT_DENY

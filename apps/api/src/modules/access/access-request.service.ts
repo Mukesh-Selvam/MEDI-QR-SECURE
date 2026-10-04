@@ -10,13 +10,16 @@ import { accessRequests, qrCredentials } from "../../database/schema.js";
 import { AuditService } from "../audit/audit.service.js";
 import type { AuthenticatedUser } from "../auth/decorators/current-user.decorator.js";
 import { QrResolutionService } from "../qr/qr-resolution.service.js";
+import { NotificationsService } from "../notifications/notifications.service.js";
 import type { CreateAccessRequestInput } from "./access-request.schema.js";
 
 @Injectable()
 export class AccessRequestService {
   constructor(
     @Inject(AuditService) private readonly audit: AuditService,
-    @Inject(QrResolutionService) private readonly qrResolution: QrResolutionService
+    @Inject(QrResolutionService) private readonly qrResolution: QrResolutionService,
+    @Inject(NotificationsService)
+    private readonly notifications: NotificationsService
   ) {}
 
   async create(
@@ -74,10 +77,20 @@ export class AccessRequestService {
         },
         transaction
       );
+      const notificationDeliveries =
+        await this.notifications.recordForPatientAndGuardians(
+          credential.patientId,
+          "ACCESS_REQUESTED",
+          created.id,
+          transaction
+        );
 
-      return { requestId: created.id, integrityHash };
+      return { requestId: created.id, integrityHash, notificationDeliveries };
     });
     this.audit.commitTransactionHash(result.integrityHash);
+    await this.notifications.deliverDevelopmentEmails(
+      result.notificationDeliveries
+    );
 
     return { requestId: result.requestId, status: "pending" };
   }

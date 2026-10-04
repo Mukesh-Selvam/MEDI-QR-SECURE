@@ -15,6 +15,8 @@ import type { AuthenticatedUser } from "../auth/decorators/current-user.decorato
 import { AuditService } from "../audit/audit.service.js";
 import { QrCredentialsService } from "../qr/qr-credentials.service.js";
 import { QrResolutionService } from "../qr/qr-resolution.service.js";
+import { NoopNotificationEmailProvider } from "../notifications/mailpit-notification-email.provider.js";
+import { NotificationsService } from "../notifications/notifications.service.js";
 import { AccessRequestService } from "./access-request.service.js";
 import { createAccessRequestSchema } from "./access-request.schema.js";
 
@@ -80,7 +82,11 @@ describe("Access request creation (integration)", () => {
     const redisClient = createRedisClient();
     resolution = new QrResolutionService(redisClient);
     credentials = new QrCredentialsService(audit);
-    service = new AccessRequestService(audit, resolution);
+    service = new AccessRequestService(
+      audit,
+      resolution,
+      new NotificationsService(new NoopNotificationEmailProvider())
+    );
   });
 
   afterAll(async () => {

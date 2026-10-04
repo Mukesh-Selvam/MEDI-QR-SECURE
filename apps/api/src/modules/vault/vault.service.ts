@@ -34,12 +34,14 @@ import { eq, and, isNull, desc } from "drizzle-orm";
 import { VaultCryptoService } from "./crypto/vault-crypto.service.js";
 import {
   hasActiveFacilityPatientRelationship,
+  findActiveConsentRequestId,
   isVerifiedGuardianOfPatient,
 } from "../auth/patient-access.js";
 import { FileValidatorService } from "./safety/file-validator.service.js";
 import { StorageService, PRESIGNED_URL_EXPIRY_SECONDS } from "./storage/storage.service.js";
 import { FhirDocumentMapper } from "./fhir/fhir-document.mapper.js";
 import { AuditService } from "../audit/audit.service.js";
+import { NotificationsService } from "../notifications/notifications.service.js";
 import { SCAN_QUEUE_NAME, type ScanDocumentJob } from "./scanner/document-scan.worker.js";
 import { env } from "../../config/env.js";
 import { getRedisConnectionOptions } from "../../config/redis.config.js";
@@ -111,6 +113,8 @@ export class VaultService {
     @Inject(StorageService) private readonly storage: StorageService,
     @Inject(FhirDocumentMapper) private readonly fhirMapper: FhirDocumentMapper,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(NotificationsService)
+    private readonly notifications: NotificationsService,
   ) {
     this.scanQueue = new Queue<ScanDocumentJob>(SCAN_QUEUE_NAME, {
       connection: getRedisConnectionOptions(),
@@ -295,15 +299,45 @@ export class VaultService {
       );
     }
 
-    await this.audit.logInTransaction({
-      actorId,
-      actorRole,
-      action: "DOCUMENT_VIEWED",
-      resourceType: "document",
-      resourceId: documentId,
-      outcome: "SUCCESS",
-      ipHash,
-    });
+    const requestId =
+      actorRole === "clinician"
+        ? await findActiveConsentRequestId(
+            doc.patientId,
+            actorId,
+            `document:${doc.documentType}`
+          )
+        : undefined;
+    if (actorRole === "clinician" && !requestId) {
+      throw new ForbiddenException("No active consent covers this record");
+    }
+
+    const { integrityHash, notificationDeliveries } = await db.transaction(
+      async (transaction) => {
+        const integrityHash = await this.audit.logInTransaction(
+          {
+            actorId,
+            actorRole,
+            action: "DOCUMENT_VIEWED",
+            resourceType: "document",
+            resourceId: documentId,
+            outcome: "SUCCESS",
+            ipHash,
+          },
+          transaction
+        );
+        const notificationDeliveries = requestId
+          ? await this.notifications.recordForPatientAndGuardians(
+              doc.patientId,
+              "DOCUMENT_READ",
+              requestId,
+              transaction
+            )
+          : [];
+        return { integrityHash, notificationDeliveries };
+      }
+    );
+    this.audit.commitTransactionHash(integrityHash);
+    await this.notifications.deliverDevelopmentEmails(notificationDeliveries);
 
     // Generate the URL only after the audit transaction commits.
     const { url, expiresAt } = await this.storage.generatePresignedGetUrl(
@@ -353,15 +387,45 @@ export class VaultService {
     }
     const mimeType = getStreamContentType(doc.mimeType);
 
-    await this.audit.logInTransaction({
-      actorId,
-      actorRole,
-      action: "DOCUMENT_VIEWED",
-      resourceType: "document",
-      resourceId: documentId,
-      outcome: "SUCCESS",
-      ipHash,
-    });
+    const requestId =
+      actorRole === "clinician"
+        ? await findActiveConsentRequestId(
+            doc.patientId,
+            actorId,
+            `document:${doc.documentType}`
+          )
+        : undefined;
+    if (actorRole === "clinician" && !requestId) {
+      throw new ForbiddenException("No active consent covers this record");
+    }
+
+    const { integrityHash, notificationDeliveries } = await db.transaction(
+      async (transaction) => {
+        const integrityHash = await this.audit.logInTransaction(
+          {
+            actorId,
+            actorRole,
+            action: "DOCUMENT_VIEWED",
+            resourceType: "document",
+            resourceId: documentId,
+            outcome: "SUCCESS",
+            ipHash,
+          },
+          transaction
+        );
+        const notificationDeliveries = requestId
+          ? await this.notifications.recordForPatientAndGuardians(
+              doc.patientId,
+              "DOCUMENT_READ",
+              requestId,
+              transaction
+            )
+          : [];
+        return { integrityHash, notificationDeliveries };
+      }
+    );
+    this.audit.commitTransactionHash(integrityHash);
+    await this.notifications.deliverDevelopmentEmails(notificationDeliveries);
 
     // 1. Fetch encrypted ciphertext only after the audit transaction commits.
     const ciphertext = await this.storage.getObject(doc.storageBucket, doc.storageKey);

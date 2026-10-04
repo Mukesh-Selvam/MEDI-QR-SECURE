@@ -12,11 +12,24 @@ const mocks = vi.hoisted(() => ({
   signUrl: vi.fn(),
   getObject: vi.fn(),
   decrypt: vi.fn(),
+  notificationRecords: vi.fn(),
+  notificationEmail: vi.fn(),
+  commitAuditHash: vi.fn(),
+  findActiveConsentRequestId: vi.fn(),
+}));
+
+vi.mock("../../auth/patient-access.js", () => ({
+  findActiveConsentRequestId: mocks.findActiveConsentRequestId,
+  hasActiveFacilityPatientRelationship: vi.fn(),
+  isVerifiedGuardianOfPatient: vi.fn(),
 }));
 
 vi.mock("../../../database/index.js", () => ({
   db: {
     select: mocks.select,
+    transaction: vi.fn((callback: (transaction: object) => unknown) =>
+      callback({})
+    ),
   },
 }));
 
@@ -65,7 +78,14 @@ function buildService(): VaultService {
       getObject: mocks.getObject,
     } as unknown as StorageService,
     {} as FhirDocumentMapper,
-    { logInTransaction: mocks.audit } as unknown as AuditService
+    {
+      logInTransaction: mocks.audit,
+      commitTransactionHash: mocks.commitAuditHash,
+    } as unknown as AuditService,
+    {
+      recordForPatientAndGuardians: mocks.notificationRecords,
+      deliverDevelopmentEmails: mocks.notificationEmail,
+    } as never
   );
 }
 
@@ -74,7 +94,13 @@ describe("VaultService read audit ordering", () => {
     vi.clearAllMocks();
     mocks.selectResults = [[readyDocument]];
     mocks.select.mockImplementation(() => queryBuilder(mocks.selectResults.shift()));
-    mocks.audit.mockResolvedValue(undefined);
+    mocks.audit.mockResolvedValue("integrity-hash");
+    mocks.commitAuditHash.mockReset();
+    mocks.notificationRecords.mockResolvedValue([]);
+    mocks.notificationEmail.mockResolvedValue(undefined);
+    mocks.findActiveConsentRequestId.mockResolvedValue(
+      "00000000-0000-0000-0000-000000000004"
+    );
     mocks.signUrl.mockResolvedValue({
       url: "https://storage.invalid/signed",
       expiresAt: new Date(Date.now() + 300_000),
@@ -177,6 +203,77 @@ describe("VaultService read audit ordering", () => {
       "ciphertext-fetched",
       "plaintext-decrypted",
     ]);
+  });
+
+  it("records clinician read notifications in the audit transaction before either output", async () => {
+    const operations: string[] = [];
+    mocks.selectResults = [
+      [readyDocument],
+      [readyDocument],
+      [{
+        wrappedDek: "wrapped",
+        kmsKeyId: "kms-key",
+        iv: "iv",
+        authTag: "tag",
+        sha256Plaintext: "a".repeat(64),
+      }],
+    ];
+    mocks.audit.mockImplementation(async () => {
+      operations.push("audit-written");
+      return "integrity-hash";
+    });
+    mocks.notificationRecords.mockImplementation(async () => {
+      operations.push("notification-recorded");
+      return [];
+    });
+    mocks.signUrl.mockImplementation(async () => {
+      operations.push("url-signed");
+      return {
+        url: "https://storage.invalid/signed",
+        expiresAt: new Date(Date.now() + 300_000),
+      };
+    });
+    mocks.getObject.mockImplementation(async () => {
+      operations.push("ciphertext-fetched");
+      return Buffer.from("ciphertext");
+    });
+    const service = buildService();
+
+    await service.generateViewUrl(
+      readyDocument.id,
+      "00000000-0000-0000-0000-000000000001",
+      "clinician",
+      "a".repeat(64)
+    );
+    expect(operations).toEqual([
+      "audit-written",
+      "notification-recorded",
+      "url-signed",
+    ]);
+
+    operations.length = 0;
+    mocks.decrypt.mockImplementation(async () => {
+      operations.push("plaintext-decrypted");
+      return Buffer.from("document bytes");
+    });
+    await service.getDecryptedDocument(
+      readyDocument.id,
+      "00000000-0000-0000-0000-000000000001",
+      "clinician",
+      "a".repeat(64)
+    );
+    expect(operations).toEqual([
+      "audit-written",
+      "notification-recorded",
+      "ciphertext-fetched",
+      "plaintext-decrypted",
+    ]);
+    expect(mocks.notificationRecords).toHaveBeenCalledWith(
+      readyDocument.patientId,
+      "DOCUMENT_READ",
+      "00000000-0000-0000-0000-000000000004",
+      expect.any(Object)
+    );
   });
 
   it("refuses to audit or read a document that is not ready", async () => {

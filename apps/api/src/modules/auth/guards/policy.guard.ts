@@ -25,6 +25,7 @@ import {
   findAccessRequestPatientOwner,
   findConsentResource,
   findGuardianWardOwnerIds,
+  findNotificationRecipient,
   findPatientOwner,
   findPatientOwnerByUserId,
   hasActiveFacilityPatientRelationship,
@@ -117,6 +118,17 @@ export class PolicyGuard implements CanActivate {
       let consentResource:
         | Awaited<ReturnType<typeof findConsentResource>>
         | undefined;
+      let notificationOwnerId: string | undefined;
+      if (
+        policy.resource === "notification" &&
+        policy.action === "update" &&
+        params?.id
+      ) {
+        notificationOwnerId = await findNotificationRecipient(params.id);
+        if (!notificationOwnerId) {
+          throw new ForbiddenException("Notification not found");
+        }
+      }
       if (
         policy.resource === "document" &&
         policy.action === "read"
@@ -223,7 +235,10 @@ export class PolicyGuard implements CanActivate {
           kind: policy.resource,
           id: policy.resource === "patient" ? patient?.id ?? resourceId : resourceId,
           attributes: {
-            owner_id: patient?.userId ?? "",
+            owner_id:
+              policy.resource === "notification"
+                ? notificationOwnerId ?? user.id
+                : patient?.userId ?? "",
             ...(patient ? { patient_id: patient.id } : {}),
             ...(documentType ? { document_type: documentType } : {}),
             ...(consentResource

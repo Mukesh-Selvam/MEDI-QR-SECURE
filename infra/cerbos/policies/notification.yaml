@@ -1,0 +1,12 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: notification
+  version: default
+  rules:
+    - actions: ["list", "update"]
+      roles: ["patient", "guardian"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: request.resource.attr.owner_id == request.principal.id

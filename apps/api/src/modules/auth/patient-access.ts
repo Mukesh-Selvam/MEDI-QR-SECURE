@@ -8,6 +8,7 @@ import {
   guardianships,
   patientFacilityRelationships,
   patients,
+  notifications,
 } from "../../database/schema.js";
 
 const guardianPatients = alias(patients, "guardian_patient");
@@ -16,6 +17,17 @@ const wardPatients = alias(patients, "ward_patient");
 export interface PatientOwner {
   id: string;
   userId: string;
+}
+
+export async function findNotificationRecipient(
+  notificationId: string
+): Promise<string | undefined> {
+  const [notification] = await db
+    .select({ userId: notifications.recipientUserId })
+    .from(notifications)
+    .where(eq(notifications.id, notificationId))
+    .limit(1);
+  return notification?.userId;
 }
 
 export async function findPatientOwner(patientId: string): Promise<PatientOwner | undefined> {
@@ -92,6 +104,27 @@ export async function hasActiveConsentScope(
     )
     .limit(1);
   return consent !== undefined;
+}
+
+export async function findActiveConsentRequestId(
+  patientId: string,
+  clinicianUserId: string,
+  scope: string
+): Promise<string | undefined> {
+  const [consent] = await db
+    .select({ requestId: consents.accessRequestId })
+    .from(consents)
+    .where(
+      and(
+        eq(consents.patientId, patientId),
+        eq(consents.granteeUserId, clinicianUserId),
+        eq(consents.status, "active"),
+        gt(consents.expiresAt, new Date()),
+        sql`${consents.scope} @> ${JSON.stringify([scope])}::jsonb`
+      )
+    )
+    .limit(1);
+  return consent?.requestId;
 }
 
 export async function findAccessRequestPatientOwner(

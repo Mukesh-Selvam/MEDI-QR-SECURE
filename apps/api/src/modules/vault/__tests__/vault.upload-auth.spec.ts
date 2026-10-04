@@ -44,7 +44,8 @@ function buildService(): VaultService {
     {} as FileValidatorService,
     {} as StorageService,
     {} as FhirDocumentMapper,
-    {} as AuditService
+    {} as AuditService,
+    { recordForPatientAndGuardians: vi.fn(), deliverDevelopmentEmails: vi.fn() } as never
   );
 }
 

@@ -15,6 +15,7 @@
 
 import { Module } from "@nestjs/common";
 import { AuditModule } from "../audit/audit.module.js";
+import { NotificationsModule } from "../notifications/notifications.module.js";
 import { LocalKmsAdapter } from "./kms/local-kms.adapter.js";
 import { KMS_ADAPTER_TOKEN, VaultCryptoService } from "./crypto/vault-crypto.service.js";
 import { FileValidatorService } from "./safety/file-validator.service.js";
@@ -26,7 +27,7 @@ import { VaultService } from "./vault.service.js";
 import { VaultController } from "./vault.controller.js";
 
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, NotificationsModule],
   controllers: [VaultController],
   providers: [
     // KMS adapter — dev: LocalKmsAdapter, prod: swap to AwsKmsAdapter etc.

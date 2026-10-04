@@ -29,6 +29,7 @@ import {
   findPatientOwnerByUserId,
 } from "../auth/patient-access.js";
 import { QR_REDIS_CLIENT } from "../qr/qr-resolution.service.js";
+import { NotificationsService } from "../notifications/notifications.service.js";
 
 const OTP_TTL_SECONDS = 120;
 const OTP_ISSUE_LIMIT_PER_HOUR = 5;
@@ -50,7 +51,9 @@ type SelectExecutor = Pick<typeof db, "select">;
 export class AccessRequestApprovalService {
   constructor(
     @Inject(AuditService) private readonly audit: AuditService,
-    @Inject(QR_REDIS_CLIENT) private readonly redis: Redis
+    @Inject(QR_REDIS_CLIENT) private readonly redis: Redis,
+    @Inject(NotificationsService)
+    private readonly notifications: NotificationsService
   ) {}
 
   async listPending(user: AuthenticatedUser) {
@@ -356,7 +359,7 @@ export class AccessRequestApprovalService {
       throw new ForbiddenException("Patient or guardian approval is required");
     }
 
-    const integrityHash = await db.transaction(async (transaction) => {
+    const { integrityHash, notificationDeliveries } = await db.transaction(async (transaction) => {
       const [request] = await transaction
         .select({
           id: accessRequests.id,
@@ -412,7 +415,7 @@ export class AccessRequestApprovalService {
         });
       }
 
-      return this.audit.logInTransaction(
+      const integrityHash = await this.audit.logInTransaction(
         {
           actorId: approverUserId,
           actorRole: approverRole,
@@ -424,8 +427,17 @@ export class AccessRequestApprovalService {
         },
         transaction
       );
+      const notificationDeliveries =
+        await this.notifications.recordForPatientAndGuardians(
+          request.patientId,
+          status === "approved" ? "ACCESS_APPROVED" : "ACCESS_DENIED",
+          request.id,
+          transaction
+        );
+      return { integrityHash, notificationDeliveries };
     });
     this.audit.commitTransactionHash(integrityHash);
+    await this.notifications.deliverDevelopmentEmails(notificationDeliveries);
   }
 }
 

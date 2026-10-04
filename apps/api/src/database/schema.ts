@@ -492,6 +492,14 @@ export const consentStatusEnum = pgEnum("consent_status", [
   "expired",
 ]);
 
+export const notificationEventTypeEnum = pgEnum("notification_event_type", [
+  "ACCESS_REQUESTED",
+  "ACCESS_APPROVED",
+  "ACCESS_DENIED",
+  "DOCUMENT_READ",
+  "ACCESS_REVOKED",
+]);
+
 export const consents = pgTable(
   "consents",
   {
@@ -517,6 +525,32 @@ export const consents = pgTable(
     index("consents_patient_status_idx").on(table.patientId, table.status),
     index("consents_grantee_idx").on(table.granteeUserId),
     index("consents_expiry_idx").on(table.expiresAt),
+  ]
+);
+
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    recipientUserId: uuid("recipient_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    eventType: notificationEventTypeEnum("event_type").notNull(),
+    requestId: uuid("request_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("notifications_recipient_created_idx").on(
+      table.recipientUserId,
+      table.createdAt
+    ),
+    index("notifications_recipient_unread_idx").on(
+      table.recipientUserId,
+      table.readAt
+    ),
   ]
 );
 

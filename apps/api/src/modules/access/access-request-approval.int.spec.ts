@@ -9,12 +9,15 @@ import {
   clinicians,
   consents,
   guardianships,
+  notifications,
   patients,
   qrCredentials,
   users,
 } from "../../database/schema.js";
 import type { AuthenticatedUser } from "../auth/decorators/current-user.decorator.js";
 import { AuditService } from "../audit/audit.service.js";
+import { NoopNotificationEmailProvider } from "../notifications/mailpit-notification-email.provider.js";
+import { NotificationsService } from "../notifications/notifications.service.js";
 import { AccessRequestApprovalService } from "./access-request-approval.service.js";
 
 describe("Access request approval flow (integration)", () => {
@@ -199,11 +202,18 @@ describe("Access request approval flow (integration)", () => {
 
     audit = new AuditService();
     redisClient = createRedisClient();
-    service = new AccessRequestApprovalService(audit, redisClient);
+    service = new AccessRequestApprovalService(
+      audit,
+      redisClient,
+      new NotificationsService(new NoopNotificationEmailProvider())
+    );
   });
 
   afterAll(async () => {
     const patientIds = [patientId, guardianPatientId, wardPatientId];
+    await db
+      .delete(notifications)
+      .where(inArray(notifications.requestId, [requestId, otherRequestId]));
     await db.delete(accessRequests).where(inArray(accessRequests.patientId, patientIds));
     await db.delete(consents).where(inArray(consents.patientId, patientIds));
     await db.delete(qrCredentials).where(inArray(qrCredentials.patientId, patientIds));

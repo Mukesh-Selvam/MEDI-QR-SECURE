@@ -115,6 +115,13 @@ test.describe("browser authentication", () => {
       page.getByText("Authenticated (Session Active)")
     ).toBeVisible();
     await expect(page.getByText("Role: patient")).toBeVisible();
+    await page.goto("/patient/notifications");
+    await expect(
+      page.getByRole("heading", { name: "Notifications" })
+    ).toBeVisible();
+    await expect(
+      page.getByText("There are no notifications yet.")
+    ).toBeVisible();
   });
 
   test("clinician signs in through Keycloak but unverified access is denied", async ({

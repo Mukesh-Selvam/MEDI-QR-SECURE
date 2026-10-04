@@ -243,6 +243,12 @@ export default function PatientAccessPage() {
           >
             Back to QR credentials
           </Link>
+          <Link
+            href="/patient/notifications"
+            className="ml-5 inline-flex min-h-11 items-center rounded-lg text-sm font-semibold text-[#4A1D3F] underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E8735A] dark:text-[#F2B9AC]"
+          >
+            Notifications
+          </Link>
           <h1 className="mt-4 font-serif text-3xl font-bold">Record access</h1>
           <p className="mt-2 max-w-[65ch] text-sm leading-6 text-[#554653] dark:text-[#D4C6D2]">
             Review who is asking, what they need, and why. You can end approved access at any time.

@@ -9,20 +9,27 @@ import { db } from "../../database/index.js";
 import { consents } from "../../database/schema.js";
 import type { AuthenticatedUser } from "../auth/decorators/current-user.decorator.js";
 import { AuditService } from "../audit/audit.service.js";
+import { NotificationsService } from "../notifications/notifications.service.js";
 
 @Injectable()
 export class ConsentService {
-  constructor(@Inject(AuditService) private readonly audit: AuditService) {}
+  constructor(
+    @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(NotificationsService)
+    private readonly notifications: NotificationsService
+  ) {}
 
   async revoke(
     consentId: string,
     user: AuthenticatedUser,
     ipHash: string
   ): Promise<{ status: "revoked" }> {
-    const integrityHash = await db.transaction(async (transaction) => {
+    const { integrityHash, notificationDeliveries } = await db.transaction(async (transaction) => {
       const [consent] = await transaction
         .select({
           id: consents.id,
+          patientId: consents.patientId,
+          accessRequestId: consents.accessRequestId,
           status: consents.status,
           expiresAt: consents.expiresAt,
         })
@@ -45,7 +52,7 @@ export class ConsentService {
             gt(consents.expiresAt, new Date())
           )
         );
-      return this.audit.logInTransaction(
+      const integrityHash = await this.audit.logInTransaction(
         {
           actorId: user.id,
           actorRole: user.role,
@@ -57,8 +64,17 @@ export class ConsentService {
         },
         transaction
       );
+      const notificationDeliveries =
+        await this.notifications.recordForPatientAndGuardians(
+          consent.patientId,
+          "ACCESS_REVOKED",
+          consent.accessRequestId,
+          transaction
+        );
+      return { integrityHash, notificationDeliveries };
     });
     this.audit.commitTransactionHash(integrityHash);
+    await this.notifications.deliverDevelopmentEmails(notificationDeliveries);
     return { status: "revoked" };
   }
 }
