@@ -80,9 +80,18 @@ export class PolicyGuard implements CanActivate {
       const clinicianSessionAction =
         policy.resource === "auth" &&
         (policy.action === "read" || policy.action === "logout");
-      if (user.role === "clinician" && !clinicianSessionAction) {
+      const verifiedClinicianRequest =
+        policy.resource === "access-request" &&
+        policy.action === "create" &&
+        user.role === "clinician" &&
+        user.isVerified === true;
+      if (
+        user.role === "clinician" &&
+        !clinicianSessionAction &&
+        !verifiedClinicianRequest
+      ) {
         throw new ForbiddenException(
-          "Clinician access is unavailable until Phase 3 consent is implemented"
+          "Clinician access is unavailable without an approved consent"
         );
       }
 

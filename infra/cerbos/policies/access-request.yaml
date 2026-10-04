@@ -1,0 +1,15 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: access-request
+  version: default
+  rules:
+    - actions: ["create"]
+      roles: ["clinician"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: request.principal.attr.is_verified == true
+    - actions: ["*"]
+      roles: ["clinician"]
+      effect: EFFECT_DENY

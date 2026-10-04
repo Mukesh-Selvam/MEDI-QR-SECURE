@@ -1,0 +1,83 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+} from "@nestjs/common";
+import { and, eq } from "drizzle-orm";
+import { db } from "../../database/index.js";
+import { accessRequests, qrCredentials } from "../../database/schema.js";
+import { AuditService } from "../audit/audit.service.js";
+import type { AuthenticatedUser } from "../auth/decorators/current-user.decorator.js";
+import { QrResolutionService } from "../qr/qr-resolution.service.js";
+import type { CreateAccessRequestInput } from "./access-request.schema.js";
+
+@Injectable()
+export class AccessRequestService {
+  constructor(
+    private readonly audit: AuditService,
+    private readonly qrResolution: QrResolutionService
+  ) {}
+
+  async create(
+    user: AuthenticatedUser,
+    input: CreateAccessRequestInput,
+    ipHash: string
+  ): Promise<{ requestId: string; status: "pending" }> {
+    if (user.role !== "clinician" || user.isVerified !== true) {
+      throw new ForbiddenException("Verified clinician access is required");
+    }
+
+    const credentialId = await this.qrResolution.consumeRequestResolution(
+      input.resolutionId
+    );
+    if (!credentialId) {
+      throw new BadRequestException("QR request is expired or unavailable");
+    }
+
+    const result = await db.transaction(async (transaction) => {
+      const [credential] = await transaction
+        .select({ id: qrCredentials.id, patientId: qrCredentials.patientId })
+        .from(qrCredentials)
+        .where(
+          and(
+            eq(qrCredentials.id, credentialId),
+            eq(qrCredentials.status, "active")
+          )
+        )
+        .limit(1)
+        .for("share");
+      if (!credential) {
+        throw new BadRequestException("QR request is expired or unavailable");
+      }
+
+      const [created] = await transaction
+        .insert(accessRequests)
+        .values({
+          patientId: credential.patientId,
+          clinicianUserId: user.id,
+          sourceQrCredentialId: credential.id,
+          purpose: input.purpose,
+          scope: [...input.scope],
+        })
+        .returning({ id: accessRequests.id });
+
+      const integrityHash = await this.audit.logInTransaction(
+        {
+          actorId: user.id,
+          actorRole: user.role,
+          action: "ACCESS_REQUEST_CREATED",
+          resourceType: "access_request",
+          resourceId: created.id,
+          outcome: "SUCCESS",
+          ipHash,
+        },
+        transaction
+      );
+
+      return { requestId: created.id, integrityHash };
+    });
+    this.audit.commitTransactionHash(result.integrityHash);
+
+    return { requestId: result.requestId, status: "pending" };
+  }
+}

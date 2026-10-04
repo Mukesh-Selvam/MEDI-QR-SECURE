@@ -95,7 +95,7 @@ describe("PolicyGuard — Clinician Verification & Fail-Closed (Conditions 5 & 9
       action: "read",
     });
 
-    await expect(guard.canActivate(ctx)).rejects.toThrow(/until Phase 3 consent/i);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(/approved consent/i);
     expect(mockCheckResource).not.toHaveBeenCalled();
   });
 
@@ -112,7 +112,7 @@ describe("PolicyGuard — Clinician Verification & Fail-Closed (Conditions 5 & 9
       action: "read",
     });
 
-    await expect(guard.canActivate(ctx)).rejects.toThrow(/until Phase 3 consent/i);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(/approved consent/i);
     expect(mockCheckResource).not.toHaveBeenCalled();
   });
 

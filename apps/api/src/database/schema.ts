@@ -96,6 +96,30 @@ export const qrCredentialStatusEnum = pgEnum("qr_credential_status", [
   "revoked",
 ]);
 
+export const accessRequestStatusEnum = pgEnum("access_request_status", [
+  "pending",
+  "approved",
+  "denied",
+  "expired",
+  "cancelled",
+]);
+
+export const accessPurposeEnum = pgEnum("access_purpose", [
+  "clinical-care",
+  "medication-review",
+  "vaccination-follow-up",
+  "continuity-of-care",
+]);
+
+export const accessScopeEnum = pgEnum("access_scope", [
+  "timeline",
+  "document:scan",
+  "document:lab",
+  "document:prescription",
+  "document:vaccination",
+  "document:discharge",
+]);
+
 // ---------------------------------------------------------------------------
 // 1. Users (Identity Anchor)
 // ---------------------------------------------------------------------------
@@ -433,6 +457,35 @@ export const qrCredentials = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// 12. Access Requests (clinician requests that a patient can approve)
+// ---------------------------------------------------------------------------
+export const accessRequests = pgTable(
+  "access_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "cascade" }),
+    clinicianUserId: uuid("clinician_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    sourceQrCredentialId: uuid("source_qr_credential_id")
+      .notNull()
+      .references(() => qrCredentials.id, { onDelete: "restrict" }),
+    purpose: accessPurposeEnum("purpose").notNull(),
+    scope: jsonb("scope").$type<(typeof accessScopeEnum.enumValues)[number][]>().notNull(),
+    status: accessRequestStatusEnum("status").notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decidedByUserId: uuid("decided_by_user_id").references(() => users.id),
+  },
+  (table) => [
+    index("access_requests_patient_status_idx").on(table.patientId, table.status),
+    index("access_requests_clinician_idx").on(table.clinicianUserId),
+  ]
+);
+
+// ---------------------------------------------------------------------------
 // Type exports
 // ---------------------------------------------------------------------------
 export type User = typeof users.$inferSelect;
@@ -453,6 +506,8 @@ export type AuditEvent = typeof auditEvents.$inferSelect;
 export type NewAuditEvent = typeof auditEvents.$inferInsert;
 export type QrCredential = typeof qrCredentials.$inferSelect;
 export type NewQrCredential = typeof qrCredentials.$inferInsert;
+export type AccessRequest = typeof accessRequests.$inferSelect;
+export type NewAccessRequest = typeof accessRequests.$inferInsert;
 
 // Vault types
 export type Document = typeof documents.$inferSelect;

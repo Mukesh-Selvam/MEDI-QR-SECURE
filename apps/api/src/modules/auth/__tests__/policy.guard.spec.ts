@@ -336,4 +336,54 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
     );
     expect(mocks.checkResource).not.toHaveBeenCalled();
   });
+
+  it("allows a verified clinician to create an access request through Cerbos", async () => {
+    const clinician: AuthenticatedUser = {
+      id: "clinician-user",
+      sub: "clinician-sub",
+      role: "clinician",
+      isVerified: true,
+    };
+    mocks.checkResource.mockResolvedValue({ isAllowed: () => true });
+    const context = createContext(
+      reflector,
+      clinician,
+      {},
+      "access-request",
+      "create"
+    );
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(mocks.checkResource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        principal: expect.objectContaining({
+          id: "clinician-user",
+          attributes: expect.objectContaining({ is_verified: true }),
+        }),
+        resource: expect.objectContaining({ kind: "access-request" }),
+        actions: ["create"],
+      })
+    );
+  });
+
+  it("denies an unverified clinician access-request creation before Cerbos", async () => {
+    const clinician: AuthenticatedUser = {
+      id: "clinician-user",
+      sub: "clinician-sub",
+      role: "clinician",
+      isVerified: false,
+    };
+    const context = createContext(
+      reflector,
+      clinician,
+      {},
+      "access-request",
+      "create"
+    );
+
+    await expect(guard.canActivate(context)).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+    expect(mocks.checkResource).not.toHaveBeenCalled();
+  });
 });

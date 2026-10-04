@@ -14,6 +14,6 @@ import { createRedisClient } from "../../config/redis.config.js";
     { provide: QR_REDIS_CLIENT, useFactory: () => createRedisClient() },
     QrResolutionService,
   ],
-  exports: [QrCredentialsService],
+  exports: [QrCredentialsService, QrResolutionService],
 })
 export class QrModule {}
