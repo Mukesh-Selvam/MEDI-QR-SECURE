@@ -1,0 +1,72 @@
+name: DocumentTestSuite
+description: Clinician document reads require a current consent scope
+
+principals:
+  patient:
+    id: patient-user
+    roles: ["patient"]
+  verified_with_consent:
+    id: clinician-user
+    roles: ["clinician"]
+    attr:
+      is_verified: true
+      has_consent_grant: true
+      has_scope: true
+  verified_without_scope:
+    id: clinician-user
+    roles: ["clinician"]
+    attr:
+      is_verified: true
+      has_consent_grant: true
+      has_scope: false
+  unverified_with_consent:
+    id: clinician-user
+    roles: ["clinician"]
+    attr:
+      is_verified: false
+      has_consent_grant: true
+      has_scope: true
+
+resources:
+  own_document:
+    kind: document
+    id: document-a
+    attr:
+      owner_id: patient-user
+      document_type: lab
+
+tests:
+  - name: Patient can read own document and only scoped verified clinicians can read
+    input:
+      principals:
+        - patient
+        - verified_with_consent
+        - verified_without_scope
+        - unverified_with_consent
+      resources: [own_document]
+      actions: [read, create, delete]
+    expected:
+      - principal: patient
+        resource: own_document
+        actions:
+          read: EFFECT_ALLOW
+          create: EFFECT_ALLOW
+          delete: EFFECT_ALLOW
+      - principal: verified_with_consent
+        resource: own_document
+        actions:
+          read: EFFECT_ALLOW
+          create: EFFECT_DENY
+          delete: EFFECT_DENY
+      - principal: verified_without_scope
+        resource: own_document
+        actions:
+          read: EFFECT_DENY
+          create: EFFECT_DENY
+          delete: EFFECT_DENY
+      - principal: unverified_with_consent
+        resource: own_document
+        actions:
+          read: EFFECT_DENY
+          create: EFFECT_DENY
+          delete: EFFECT_DENY

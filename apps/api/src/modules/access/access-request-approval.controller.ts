@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Inject,
   Param,
   ParseUUIDPipe,
   Post,
@@ -23,7 +24,10 @@ const verifyOtpSchema = z.object({ code: z.string().regex(/^\d{6}$/) }).strict()
 @Controller("access/requests")
 @UseGuards(JwtAuthGuard, PolicyGuard)
 export class AccessRequestApprovalController {
-  constructor(private readonly approvals: AccessRequestApprovalService) {}
+  constructor(
+    @Inject(AccessRequestApprovalService)
+    private readonly approvals: AccessRequestApprovalService
+  ) {}
 
   @Get("inbox")
   @RequirePolicy({ resource: "access-request", action: "list" })

@@ -49,7 +49,7 @@ type SelectExecutor = Pick<typeof db, "select">;
 @Injectable()
 export class AccessRequestApprovalService {
   constructor(
-    private readonly audit: AuditService,
+    @Inject(AuditService) private readonly audit: AuditService,
     @Inject(QR_REDIS_CLIENT) private readonly redis: Redis
   ) {}
 

@@ -1,5 +1,6 @@
 import {
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -17,7 +18,7 @@ import {
 
 @Injectable()
 export class QrCredentialsService {
-  constructor(private readonly audit: AuditService) {}
+  constructor(@Inject(AuditService) private readonly audit: AuditService) {}
 
   async list(userId: string, role: string) {
     const patientId = await this.getPatientId(userId, role);

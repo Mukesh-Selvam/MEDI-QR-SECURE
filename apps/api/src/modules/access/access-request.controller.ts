@@ -4,6 +4,7 @@ import {
   Controller,
   HttpCode,
   HttpStatus,
+  Inject,
   Post,
   Req,
   UseGuards,
@@ -20,7 +21,10 @@ import { PolicyGuard } from "../auth/guards/policy.guard.js";
 @Controller("access/requests")
 @UseGuards(JwtAuthGuard, PolicyGuard)
 export class AccessRequestController {
-  constructor(private readonly accessRequests: AccessRequestService) {}
+  constructor(
+    @Inject(AccessRequestService)
+    private readonly accessRequests: AccessRequestService
+  ) {}
 
   @Post()
   @HttpCode(HttpStatus.CREATED)

@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -11,7 +12,7 @@ import { AuditService } from "../audit/audit.service.js";
 
 @Injectable()
 export class ConsentService {
-  constructor(private readonly audit: AuditService) {}
+  constructor(@Inject(AuditService) private readonly audit: AuditService) {}
 
   async revoke(
     consentId: string,

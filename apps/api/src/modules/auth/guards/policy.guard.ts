@@ -20,6 +20,8 @@ import type { FastifyRequest } from "fastify";
 import { env } from "../../../config/env.js";
 import {
   findDocumentPatientOwner,
+  findDocumentAccessContext,
+  hasActiveConsentScope,
   findAccessRequestPatientOwner,
   findConsentResource,
   findGuardianWardOwnerIds,
@@ -92,11 +94,17 @@ export class PolicyGuard implements CanActivate {
         policy.action === "read" &&
         user.role === "clinician" &&
         user.isVerified === true;
+      const clinicianDocumentRead =
+        policy.resource === "document" &&
+        policy.action === "read" &&
+        user.role === "clinician" &&
+        user.isVerified === true;
       if (
         user.role === "clinician" &&
         !clinicianSessionAction &&
         !verifiedClinicianRequest &&
-        !verifiedClinicianConsentRead
+        !verifiedClinicianConsentRead &&
+        !clinicianDocumentRead
       ) {
         throw new ForbiddenException(
           "Clinician access is unavailable without an approved consent"
@@ -104,12 +112,29 @@ export class PolicyGuard implements CanActivate {
       }
 
       let patient: ResolvedPatient | undefined;
+      let documentType: string | undefined;
+      let hasConsentGrant = false;
       let consentResource:
         | Awaited<ReturnType<typeof findConsentResource>>
         | undefined;
       if (
         policy.resource === "document" &&
-        (policy.action === "read" || policy.action === "create")
+        policy.action === "read"
+      ) {
+        if (params?.patientId) {
+          patient = await findPatientOwner(params.patientId);
+        } else if (params?.id) {
+          const context = await findDocumentAccessContext(params.id);
+          patient = context?.patient;
+          documentType = context?.documentType;
+        }
+        if (!patient) {
+          throw new ForbiddenException("Document or patient record not found");
+        }
+      }
+      if (
+        policy.resource === "document" &&
+        policy.action === "create"
       ) {
         patient = await this.resolveDocumentPatient(request, params, policy);
         if (!patient) {
@@ -151,6 +176,24 @@ export class PolicyGuard implements CanActivate {
         }
       }
 
+      if (clinicianDocumentRead && patient && user.isVerified === true) {
+        const requiredScope = params?.patientId
+          ? "timeline"
+          : documentType
+            ? `document:${documentType}`
+            : undefined;
+        if (requiredScope) {
+          hasConsentGrant = await hasActiveConsentScope(
+            patient.id,
+            user.id,
+            requiredScope
+          );
+        }
+        if (!hasConsentGrant) {
+          throw new ForbiddenException("No active consent covers this record");
+        }
+      }
+
       const guardianWardIds =
         user.role === "guardian"
           ? await findGuardianWardOwnerIds(user.id)
@@ -168,7 +211,9 @@ export class PolicyGuard implements CanActivate {
           roles: [user.role],
           attributes: {
             is_verified: user.isVerified ?? false,
-            has_access_grant: false,
+            has_access_grant: hasConsentGrant,
+            has_consent_grant: hasConsentGrant,
+            has_scope: hasConsentGrant,
             has_patient_relationship: hasPatientRelationship,
             guardian_ward_ids: guardianWardIds,
             facility_id: user.facilityId ?? "",
@@ -180,6 +225,7 @@ export class PolicyGuard implements CanActivate {
           attributes: {
             owner_id: patient?.userId ?? "",
             ...(patient ? { patient_id: patient.id } : {}),
+            ...(documentType ? { document_type: documentType } : {}),
             ...(consentResource
               ? {
                   grantee_id: consentResource.granteeUserId,

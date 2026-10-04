@@ -1,5 +1,6 @@
 import {
   Controller,
+  Inject,
   Param,
   ParseUUIDPipe,
   Post,
@@ -17,7 +18,7 @@ import { ConsentService } from "./consent.service.js";
 @Controller("consents")
 @UseGuards(JwtAuthGuard, PolicyGuard)
 export class ConsentController {
-  constructor(private readonly consents: ConsentService) {}
+  constructor(@Inject(ConsentService) private readonly consents: ConsentService) {}
 
   @Post(":id/revoke")
   @RequirePolicy({ resource: "consent", action: "revoke" })

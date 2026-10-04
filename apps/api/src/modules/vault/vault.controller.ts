@@ -23,6 +23,7 @@ import {
   BadRequestException,
   HttpCode,
   HttpStatus,
+  Inject,
 } from "@nestjs/common";
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { VaultService } from "./vault.service.js";
@@ -43,7 +44,7 @@ const uploadMetadataSchema = z.object({
 @Controller("vault")
 @UseGuards(JwtAuthGuard, PolicyGuard)
 export class VaultController {
-  constructor(private readonly vaultService: VaultService) {}
+  constructor(@Inject(VaultService) private readonly vaultService: VaultService) {}
 
   /**
    * POST /api/v1/vault/upload

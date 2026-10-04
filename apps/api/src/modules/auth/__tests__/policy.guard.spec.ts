@@ -399,4 +399,55 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       /policy engine unavailable/i
     );
   });
+
+  it("allows a verified clinician document read only with a matching active database consent scope", async () => {
+    const clinician: AuthenticatedUser = {
+      id: "clinician-user",
+      sub: "clinician-sub",
+      role: "clinician",
+      isVerified: true,
+    };
+    mocks.queryResults = [
+      [{ patientId: "patient-a", documentType: "lab" }],
+      [{ id: "patient-a", userId: "patient-owner" }],
+      [{ id: "consent-a" }],
+    ];
+    mocks.checkResource.mockResolvedValue({ isAllowed: () => true });
+    const context = createContext(reflector, clinician, { id: "document-a" });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(mocks.checkResource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        principal: expect.objectContaining({
+          attributes: expect.objectContaining({
+            has_consent_grant: true,
+            has_scope: true,
+          }),
+        }),
+        resource: expect.objectContaining({
+          attributes: expect.objectContaining({ document_type: "lab" }),
+        }),
+      })
+    );
+  });
+
+  it("denies a verified clinician without an active database consent scope before Cerbos", async () => {
+    const clinician: AuthenticatedUser = {
+      id: "clinician-user",
+      sub: "clinician-sub",
+      role: "clinician",
+      isVerified: true,
+    };
+    mocks.queryResults = [
+      [{ patientId: "patient-a", documentType: "lab" }],
+      [{ id: "patient-a", userId: "patient-owner" }],
+      [],
+    ];
+    const context = createContext(reflector, clinician, { id: "document-a" });
+
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      /no active consent covers this record/i
+    );
+    expect(mocks.checkResource).not.toHaveBeenCalled();
+  });
 });

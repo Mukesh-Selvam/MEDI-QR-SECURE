@@ -28,6 +28,7 @@ yarn-debug.log*
 pnpm-debug.log*
 coverage
 .nyc_output
+apps/web/test-results/
 
 # Local storage data (MinIO, Postgres, Redis volumes)
 .data/

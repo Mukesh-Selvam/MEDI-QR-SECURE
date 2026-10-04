@@ -227,6 +227,14 @@ jobs:
       - name: Run browser authentication tests
         run: pnpm test:e2e
 
+      - name: Upload patient consent flow screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-3-consent-flow-screenshots
+          path: apps/web/test-results/**/consent-flow-*.png
+          if-no-files-found: warn
+
   security-scans:
     name: Security Scanners (Gitleaks, Semgrep, Trivy)
     runs-on: ubuntu-latest

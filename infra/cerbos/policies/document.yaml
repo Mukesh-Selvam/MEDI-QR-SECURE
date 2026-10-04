@@ -49,13 +49,7 @@ resourcePolicy:
               - expr: request.principal.attr.has_patient_relationship == true
 
     # -----------------------------------------------------------------------
-    # Clinicians: DENIED by default until Phase 3 adds explicit consent grant.
-    # -----------------------------------------------------------------------
-    - actions: ["read", "create", "delete"]
-      roles: ["clinician"]
-      effect: EFFECT_DENY
-
-    # Explicit deny for unverified clinicians (belt-and-suspenders)
+    # Clinicians can read only verified, currently consented scopes.
     - actions: ["*"]
       roles: ["clinician"]
       effect: EFFECT_DENY
@@ -63,7 +57,6 @@ resourcePolicy:
         match:
           expr: request.principal.attr.is_verified == false
 
-    # Verified clinicians with consent grant (Phase 3 — currently always denied above)
     - actions: ["read"]
       roles: ["clinician"]
       effect: EFFECT_ALLOW
@@ -73,6 +66,7 @@ resourcePolicy:
             of:
               - expr: request.principal.attr.is_verified == true
               - expr: request.principal.attr.has_consent_grant == true
+              - expr: request.principal.attr.has_scope == true
 
     # -----------------------------------------------------------------------
     # Pharmacy staff: prescriptions only, with active grant

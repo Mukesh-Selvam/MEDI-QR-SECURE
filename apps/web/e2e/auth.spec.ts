@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { Client } from "pg";
 import { expect, test } from "@playwright/test";
 
@@ -39,6 +39,9 @@ const clinicianPassword = `Aa1!${randomBytes(32).toString("hex")}`;
 let adminToken: string;
 let clinicianKeycloakId: string;
 let clinicianDatabaseId: string;
+let clinicianTotpSecret = "";
+let patientUserId = "";
+let patientDatabaseId = "";
 
 test.describe("browser authentication", () => {
   test.beforeAll(async () => {
@@ -51,6 +54,23 @@ test.describe("browser authentication", () => {
   });
 
   test.afterAll(async () => {
+    if (patientDatabaseId || patientUserId) {
+      const connection = await createDatabaseClient();
+      try {
+        await connection.connect();
+        if (patientUserId) {
+          await connection.query(
+            `UPDATE users
+             SET status = 'suspended', phone = NULL, email = NULL, keycloak_id = NULL
+             WHERE id = $1`,
+            [patientUserId]
+          );
+        }
+      } finally {
+        await connection.end();
+      }
+    }
+
     if (clinicianDatabaseId) {
       const connection = await createDatabaseClient();
       try {
@@ -58,9 +78,12 @@ test.describe("browser authentication", () => {
         await connection.query("DELETE FROM clinicians WHERE user_id = $1", [
           clinicianDatabaseId,
         ]);
-        await connection.query("DELETE FROM users WHERE id = $1", [
-          clinicianDatabaseId,
-        ]);
+        await connection.query(
+          `UPDATE users
+           SET status = 'suspended', phone = NULL, email = NULL, keycloak_id = NULL
+           WHERE id = $1`,
+          [clinicianDatabaseId]
+        );
       } finally {
         await connection.end();
       }
@@ -124,6 +147,7 @@ test.describe("browser authentication", () => {
     const secret = (await page.locator("#kc-totp-secret-key").innerText())
       .replace(/\s+/g, "")
       .toUpperCase();
+    clinicianTotpSecret = secret;
     await page.locator("#userLabel").fill("MediQR E2E");
     await page.locator("#totp").fill(generateTotp(secret));
     await page.locator("#saveTOTPBtn").click();
@@ -176,6 +200,236 @@ test.describe("browser authentication", () => {
       `/api/v1/patients/${randomUUID()}`
     );
     expect(patientDataResponse.status()).toBe(403);
+  });
+
+  test("clinician scans, patient approves, reads a document, and revokes access", async ({
+    browser,
+  }, testInfo) => {
+    if (!clinicianTotpSecret) {
+      throw new Error("The seeded fake clinician MFA setup did not complete.");
+    }
+    const connection = await createDatabaseClient();
+    let patientRecordId = "";
+    try {
+      await connection.connect();
+      await connection.query(
+        `UPDATE clinicians SET is_verified = true, verified_at = now()
+         WHERE user_id = $1`,
+        [clinicianDatabaseId]
+      );
+    } finally {
+      await connection.end();
+    }
+
+    const patientContext = await browser.newContext();
+    const patientPage = await patientContext.newPage();
+    const phone = `+919${randomBytes(4).readUInt32BE(0)
+      .toString()
+      .padStart(10, "0")
+      .slice(-9)}`;
+    await patientPage.goto("/login/patient");
+    await patientPage.locator('input[type="tel"]').fill(phone.slice(3));
+    await patientPage.getByRole("button", { name: "Send Verification OTP" }).click();
+    const patientOtp = await readOtpFromMailpit(phone);
+    await patientPage.locator('input[placeholder="123456"]').fill(patientOtp);
+    await patientPage.getByRole("button", { name: "Verify & Sign In" }).click();
+    await expect(
+      patientPage.getByText("Authenticated (Session Active)")
+    ).toBeVisible();
+
+    const profileResponse = await patientPage.request.get("/api/v1/auth/me");
+    if (!profileResponse.ok()) {
+      throw new Error("The fake patient session could not be resolved.");
+    }
+    const profile = (await profileResponse.json()) as { id?: string };
+    if (!profile.id) throw new Error("The fake patient session was not resolved.");
+    patientUserId = profile.id;
+    patientDatabaseId = randomUUID();
+    const patientLookup = await createDatabaseClient();
+    try {
+      await patientLookup.connect();
+      await patientLookup.query(
+        `INSERT INTO patients (
+           id, user_id, health_id, full_name, phone_hash, encrypted_phone
+         ) VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          patientDatabaseId,
+          patientUserId,
+          `E2E-FAKE-${randomUUID()}`,
+          "Fake E2E Patient",
+          createHash("sha256").update(randomBytes(32)).digest("hex"),
+          "e2e-test-only-ciphertext",
+        ]
+      );
+      patientRecordId = patientDatabaseId;
+    } finally {
+      await patientLookup.end();
+    }
+    if (!patientRecordId) throw new Error("The fake patient record was not created.");
+
+    await patientPage.goto("/patient/credentials");
+    const credentialResponsePromise = patientPage.waitForResponse(
+      (response) =>
+        response.url().includes("/api/v1/qr/credentials") &&
+        response.request().method() === "POST"
+    );
+    await patientPage.getByRole("button", { name: "Create printed QR" }).click();
+    const credentialResponse = await credentialResponsePromise;
+    if (!credentialResponse.ok()) {
+      throw new Error("The patient QR credential could not be issued.");
+    }
+    const credential = (await credentialResponse.json()) as {
+      credentialToken?: string;
+    };
+    if (!credential.credentialToken) {
+      throw new Error("The patient QR credential response was incomplete.");
+    }
+
+    const uploadResult = await patientPage.evaluate(async (patientId) => {
+      const csrfCookie = document.cookie
+        .split("; ")
+        .find((item) => item.startsWith("__Host-mediqr-csrf="));
+      const csrfToken = csrfCookie
+        ? decodeURIComponent(csrfCookie.slice("__Host-mediqr-csrf=".length))
+        : "";
+      const form = new FormData();
+      form.append("documentType", "lab");
+      form.append("patientId", patientId);
+      form.append("documentDate", new Date().toISOString());
+      form.append(
+        "file",
+        new File(["%PDF-1.4\nMediQR fake integration record\n%%EOF"], "fake-lab.pdf", {
+          type: "application/pdf",
+        })
+      );
+      const response = await fetch("/api/v1/vault/upload", {
+        method: "POST",
+        headers: {
+          "x-csrf-token": csrfToken,
+          "x-mediqr-patient-id": patientId,
+        },
+        body: form,
+        cache: "no-store",
+      });
+      const body: unknown = await response.json();
+      return { status: response.status, body };
+    }, patientRecordId);
+    if (uploadResult.status !== 202) {
+      throw new Error("The fake record could not be staged for scanning.");
+    }
+    const uploadedDocumentId =
+      typeof uploadResult.body === "object" &&
+      uploadResult.body !== null &&
+      "id" in uploadResult.body &&
+      typeof uploadResult.body.id === "string"
+        ? uploadResult.body.id
+        : undefined;
+    if (!uploadedDocumentId) {
+      throw new Error("The fake record upload response was incomplete.");
+    }
+    await expect
+      .poll(async () => {
+        const response = await patientPage.request.get(
+          `/api/v1/vault/${uploadedDocumentId}/status`
+        );
+        if (!response.ok()) return "unavailable";
+        const state = (await response.json()) as { status?: string };
+        return state.status;
+      })
+      .toBe("ready");
+
+    const clinicianContext = await browser.newContext();
+    const clinicianPage = await clinicianContext.newPage();
+    await clinicianPage.goto("/login/clinician");
+    await clinicianPage
+      .getByRole("link", { name: "Continue with secure sign-in" })
+      .click();
+    await clinicianPage.locator("#username").fill(clinicianUsername);
+    await clinicianPage.locator("#password").fill(clinicianPassword);
+    await clinicianPage.locator("#kc-login").click();
+    await clinicianPage.locator("#kc-otp-login-form").waitFor({
+      state: "visible",
+      timeout: 15_000,
+    });
+    await waitForNextTotpWindow();
+    await clinicianPage.locator("#otp").fill(generateTotp(clinicianTotpSecret));
+    await clinicianPage.locator("#kc-login").click();
+    await expect(clinicianPage).toHaveURL(/\/login\/clinician\?auth=success/);
+
+    await clinicianPage.goto(
+      `/request-access/#credential=${encodeURIComponent(credential.credentialToken)}`
+    );
+    await expect(
+      clinicianPage.getByRole("checkbox", { name: "Laboratory results" })
+    ).toBeVisible({ timeout: 15_000 });
+    await clinicianPage
+      .getByRole("checkbox", { name: "Laboratory results" })
+      .check();
+    const accessRequestResponsePromise = clinicianPage.waitForResponse(
+      (response) =>
+        response.url().includes("/api/v1/access/requests") &&
+        response.request().method() === "POST"
+    );
+    await clinicianPage
+      .getByRole("button", { name: "Send request to patient" })
+      .click();
+    const accessRequestResponse = await accessRequestResponsePromise;
+    if (!accessRequestResponse.ok()) {
+      const failure: unknown = await accessRequestResponse.json();
+      const message =
+        typeof failure === "object" &&
+        failure !== null &&
+        "message" in failure &&
+        typeof failure.message === "string"
+          ? failure.message
+          : "No public error detail was returned.";
+      throw new Error(
+        `The access request failed with HTTP ${accessRequestResponse.status()}: ${message}`
+      );
+    }
+    await expect(
+      clinicianPage.getByText("Request sent. Waiting for the patient to review it.")
+    ).toBeVisible();
+
+    await patientPage.goto("/patient/access");
+    await expect(
+      patientPage.getByRole("heading", { name: "Review this request" })
+    ).toBeVisible();
+    await expect(
+      patientPage.getByText("Laboratory results", { exact: true })
+    ).toBeVisible();
+    await expect(patientPage.getByText(/access lasts 24 hours/i)).toBeVisible();
+    await patientPage.getByRole("button", { name: "Approve access" }).click();
+    await expect(
+      patientPage.getByRole("status").filter({ hasText: "Access approved" })
+    ).toBeVisible();
+    await patientPage.screenshot({
+      path: testInfo.outputPath("consent-flow-approved.png"),
+      fullPage: true,
+    });
+
+    const firstRead = await clinicianPage.request.get(
+      `/api/v1/vault/${uploadedDocumentId}/stream`
+    );
+    expect(firstRead.status()).toBe(200);
+    expect(firstRead.headers()["content-type"]).toContain("application/pdf");
+    expect((await firstRead.body()).toString()).toContain("%PDF-1.4");
+
+    await patientPage.getByRole("button", { name: "End this access" }).click();
+    await expect(
+      patientPage.getByRole("status").filter({ hasText: "Access ended" })
+    ).toBeVisible();
+    await patientPage.screenshot({
+      path: testInfo.outputPath("consent-flow-revoked.png"),
+      fullPage: true,
+    });
+
+    const readAfterRevocation = await clinicianPage.request.get(
+      `/api/v1/vault/${uploadedDocumentId}/stream`
+    );
+    expect(readAfterRevocation.status()).toBe(403);
+    await clinicianContext.close();
+    await patientContext.close();
   });
 });
 

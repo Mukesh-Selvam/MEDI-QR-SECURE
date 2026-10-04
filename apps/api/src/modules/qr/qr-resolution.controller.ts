@@ -4,6 +4,7 @@ import {
   Controller,
   HttpCode,
   HttpStatus,
+  Inject,
   Post,
   Req,
   Res,
@@ -27,7 +28,9 @@ const GENERIC_RESOLUTION_RESPONSE = Object.freeze({
 
 @Controller("qr")
 export class QrResolutionController {
-  constructor(private readonly resolution: QrResolutionService) {}
+  constructor(
+    @Inject(QrResolutionService) private readonly resolution: QrResolutionService
+  ) {}
 
   @Post("resolve")
   @HttpCode(HttpStatus.OK)

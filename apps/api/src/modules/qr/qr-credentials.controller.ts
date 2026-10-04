@@ -2,6 +2,7 @@ import {
   Controller,
   Delete,
   Get,
+  Inject,
   Param,
   ParseUUIDPipe,
   Post,
@@ -19,7 +20,10 @@ import { PolicyGuard } from "../auth/guards/policy.guard.js";
 @Controller("qr/credentials")
 @UseGuards(JwtAuthGuard, PolicyGuard)
 export class QrCredentialsController {
-  constructor(private readonly credentials: QrCredentialsService) {}
+  constructor(
+    @Inject(QrCredentialsService)
+    private readonly credentials: QrCredentialsService
+  ) {}
 
   @Get()
   @RequirePolicy({ resource: "patient", action: "update" })

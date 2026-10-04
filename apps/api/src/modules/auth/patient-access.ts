@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, or } from "drizzle-orm";
+import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "../../database/index.js";
 import {
@@ -48,6 +48,50 @@ export async function findDocumentPatientOwner(
     .limit(1);
 
   return document ? findPatientOwner(document.patientId) : undefined;
+}
+
+export async function findDocumentAccessContext(
+  documentId: string
+): Promise<
+  | {
+      patient: PatientOwner;
+      documentType: string;
+    }
+  | undefined
+> {
+  const [document] = await db
+    .select({
+      patientId: documents.patientId,
+      documentType: documents.documentType,
+    })
+    .from(documents)
+    .where(eq(documents.id, documentId))
+    .limit(1);
+  if (!document) return undefined;
+
+  const patient = await findPatientOwner(document.patientId);
+  return patient ? { patient, documentType: document.documentType } : undefined;
+}
+
+export async function hasActiveConsentScope(
+  patientId: string,
+  clinicianUserId: string,
+  scope: string
+): Promise<boolean> {
+  const [consent] = await db
+    .select({ id: consents.id })
+    .from(consents)
+    .where(
+      and(
+        eq(consents.patientId, patientId),
+        eq(consents.granteeUserId, clinicianUserId),
+        eq(consents.status, "active"),
+        gt(consents.expiresAt, new Date()),
+        sql`${consents.scope} @> ${JSON.stringify([scope])}::jsonb`
+      )
+    )
+    .limit(1);
+  return consent !== undefined;
 }
 
 export async function findAccessRequestPatientOwner(

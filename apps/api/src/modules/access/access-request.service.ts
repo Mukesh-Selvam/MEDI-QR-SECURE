@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
 } from "@nestjs/common";
 import { and, eq } from "drizzle-orm";
@@ -14,8 +15,8 @@ import type { CreateAccessRequestInput } from "./access-request.schema.js";
 @Injectable()
 export class AccessRequestService {
   constructor(
-    private readonly audit: AuditService,
-    private readonly qrResolution: QrResolutionService
+    @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(QrResolutionService) private readonly qrResolution: QrResolutionService
   ) {}
 
   async create(
