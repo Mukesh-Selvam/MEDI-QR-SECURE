@@ -224,6 +224,26 @@ describe("AuthService — OTP flow", () => {
     expect(reply.setCookie).toHaveBeenCalledTimes(3);
   });
 
+  it("verifyOtp: refuses to authenticate staff through the patient OTP flow", async () => {
+    mockFindFirstResult = {
+      id: "staff-user-id",
+      role: "clinician",
+      status: "active",
+      phone: VALID_PHONE,
+    };
+    await service.sendOtp(VALID_PHONE, IP_HASH, REQUEST_ID);
+
+    await expect(
+      service.verifyOtp(
+        VALID_PHONE,
+        sms.lastOtp!,
+        IP_HASH,
+        UA,
+        makeFastifyReply()
+      )
+    ).rejects.toThrow(/Staff must authenticate through OIDC/);
+  });
+
   it("verifyOtp: OTP is single-use — second attempt throws", async () => {
     await service.sendOtp(VALID_PHONE, IP_HASH, REQUEST_ID);
     const correctOtp = sms.lastOtp!;

@@ -151,6 +151,7 @@ const EnvSchema = z.object({
   /** Alias used in guards/services */
   KEYCLOAK_URL: z.string().url().optional(),
   KEYCLOAK_REALM: z.string().min(1, "KEYCLOAK_REALM must be set"),
+  KEYCLOAK_CLIENT_ID: z.string().min(1).default("mediqr-web"),
 
   // Cerbos PDP
   CERBOS_HOST: z.string().min(1).default("localhost"),

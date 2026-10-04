@@ -274,6 +274,13 @@ export class AuthService implements OnModuleDestroy {
     });
 
     let resolvedUser = existingUser;
+    if (
+      resolvedUser &&
+      resolvedUser.role !== "patient" &&
+      resolvedUser.role !== "guardian"
+    ) {
+      throw new UnauthorizedException("Staff must authenticate through OIDC");
+    }
     if (!resolvedUser) {
       const [newUser] = await db
         .insert(users)

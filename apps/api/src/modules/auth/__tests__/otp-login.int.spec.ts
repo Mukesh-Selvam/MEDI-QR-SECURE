@@ -31,6 +31,7 @@ describe("Patient OTP login (integration)", () => {
   let app!: NestFastifyApplication;
   let fastify!: FastifyInstance;
   let testPhone!: string;
+  let testIp!: string;
   let userId: string | undefined;
   let auditIpHash!: string;
   let startedAt!: Date;
@@ -68,7 +69,8 @@ describe("Patient OTP login (integration)", () => {
     await fastify.ready();
 
     testPhone = `+919${randomInt(0, 1_000_000_000).toString().padStart(9, "0")}`;
-    auditIpHash = app.get(AuditService).hashIp("127.0.0.1");
+    testIp = `127.${randomInt(1, 255)}.${randomInt(1, 255)}.${randomInt(1, 255)}`;
+    auditIpHash = app.get(AuditService).hashIp(testIp);
     startedAt = new Date(Date.now() - 1000);
   }, 90000);
 
@@ -102,6 +104,7 @@ describe("Patient OTP login (integration)", () => {
       method: "POST",
       url: "/api/v1/auth/otp/send",
       payload: { phone: testPhone },
+      remoteAddress: testIp,
     });
     expect(sendResponse.statusCode).toBe(200);
 
@@ -110,6 +113,7 @@ describe("Patient OTP login (integration)", () => {
       method: "POST",
       url: "/api/v1/auth/otp/verify",
       payload: { phone: testPhone, otp },
+      remoteAddress: testIp,
     });
     expect(verifyResponse.statusCode).toBe(200);
 
