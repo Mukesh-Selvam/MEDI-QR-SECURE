@@ -1,0 +1,36 @@
+# Confirmed non-production test fixtures in QR resolution unit tests.
+dabbea99855993cf8b51843c610f1c48235e6835:apps/api/src/modules/qr/qr-resolution.service.spec.ts:generic-api-key:17
+dabbea99855993cf8b51843c610f1c48235e6835:apps/api/src/modules/qr/qr-resolution.service.spec.ts:generic-api-key:34
+722aad770990004dfe55848e748eb1c2ff3d9eb2:apps/api/src/modules/qr/qr-resolution.service.spec.ts:generic-api-key:17
+722aad770990004dfe55848e748eb1c2ff3d9eb2:apps/api/src/modules/qr/qr-resolution.service.spec.ts:generic-api-key:34
+
+# Ephemeral integration-test key values in CI workflow revisions.
+c6c78f3362231b8e26e0e0363ef974c91e797f4f:.github/workflows/ci.yml:generic-api-key:177
+c6c78f3362231b8e26e0e0363ef974c91e797f4f:.github/workflows/ci.yml:generic-api-key:178
+c6c78f3362231b8e26e0e0363ef974c91e797f4f:.github/workflows/ci.yml:generic-api-key:181
+2290d19d31b1051b63c1ce8c4e7349fa36b350ed:.github/workflows/ci.yml:generic-api-key:177
+2290d19d31b1051b63c1ce8c4e7349fa36b350ed:.github/workflows/ci.yml:generic-api-key:178
+2290d19d31b1051b63c1ce8c4e7349fa36b350ed:.github/workflows/ci.yml:generic-api-key:181
+e973943bda203cde928053c80dda0788fa373a14:.github/workflows/ci.yml:generic-api-key:88
+e973943bda203cde928053c80dda0788fa373a14:.github/workflows/ci.yml:generic-api-key:89
+e973943bda203cde928053c80dda0788fa373a14:.github/workflows/ci.yml:generic-api-key:92
+3572b98a6c01004deace45640c1e2e26872b80e0:.github/workflows/ci.yml:generic-api-key:92
+3572b98a6c01004deace45640c1e2e26872b80e0:.github/workflows/ci.yml:generic-api-key:93
+3572b98a6c01004deace45640c1e2e26872b80e0:.github/workflows/ci.yml:generic-api-key:96
+
+# Deterministic KMS and HMAC test values, plus environment-schema fixtures.
+e973943bda203cde928053c80dda0788fa373a14:apps/api/src/modules/vault/__tests__/crypto.spec.ts:generic-api-key:18
+e973943bda203cde928053c80dda0788fa373a14:apps/api/src/test/setup.ts:generic-api-key:20
+e973943bda203cde928053c80dda0788fa373a14:apps/api/src/test/setup.ts:generic-api-key:21
+e973943bda203cde928053c80dda0788fa373a14:apps/api/src/test/integration-setup.ts:generic-api-key:33
+e973943bda203cde928053c80dda0788fa373a14:apps/api/src/test/integration-setup.ts:generic-api-key:34
+e973943bda203cde928053c80dda0788fa373a14:apps/api/src/test/integration-setup.ts:generic-api-key:37
+0af2f41442fc196433e761c7cce4a412fc673d48:apps/api/src/test/integration-setup.ts:generic-api-key:34
+0af2f41442fc196433e761c7cce4a412fc673d48:apps/api/src/test/integration-setup.ts:generic-api-key:35
+0af2f41442fc196433e761c7cce4a412fc673d48:apps/api/src/test/integration-setup.ts:generic-api-key:38
+936c4a4be683737bcd7759777ffcf8691b31ca5a:apps/api/src/modules/vault/__tests__/crypto.spec.ts:generic-api-key:18
+936c4a4be683737bcd7759777ffcf8691b31ca5a:apps/api/src/test/setup.ts:generic-api-key:23
+936c4a4be683737bcd7759777ffcf8691b31ca5a:apps/api/src/test/setup.ts:generic-api-key:24
+f0d00681cdcda60fb76cc09009730e90fdf861f4:apps/api/src/config/env.spec.ts:generic-api-key:82
+3d7dc31b2b96764de6edda9ed9d830c6567afe2f:apps/api/src/config/env.spec.ts:generic-api-key:82
+5469d455cd041a9f88d041265736bc6d58838336:.env.example:generic-api-key:63
