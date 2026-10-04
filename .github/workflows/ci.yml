@@ -56,6 +56,9 @@ jobs:
       - name: Run Unit Tests
         run: pnpm turbo run test
 
+      - name: Run Cerbos policy tests
+        run: docker run --rm -v "$PWD/infra/cerbos/policies:/policies:ro" ghcr.io/cerbos/cerbos:0.42.0 compile /policies
+
       - name: Build Monorepo (Turborepo)
         run: pnpm turbo run build
 

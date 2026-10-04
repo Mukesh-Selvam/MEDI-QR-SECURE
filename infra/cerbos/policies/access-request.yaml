@@ -32,6 +32,3 @@ resourcePolicy:
         match:
           expr: >
             request.principal.attr.guardian_ward_ids.exists(wardId, wardId == request.resource.attr.owner_id)
-    - actions: ["*"]
-      roles: ["clinician"]
-      effect: EFFECT_DENY

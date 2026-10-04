@@ -1,0 +1,126 @@
+name: AccessRequestTestSuite
+description: Access request creation and patient or guardian decisions
+
+principals:
+  verified_clinician:
+    id: clinician-a
+    roles: ["clinician"]
+    attr:
+      is_verified: true
+  unverified_clinician:
+    id: clinician-b
+    roles: ["clinician"]
+    attr:
+      is_verified: false
+  patient:
+    id: patient-user-a
+    roles: ["patient"]
+  guardian:
+    id: guardian-user
+    roles: ["guardian"]
+    attr:
+      guardian_ward_ids: ["child-user-a"]
+
+resources:
+  new_request:
+    kind: access-request
+    id: new-request
+  own_request:
+    kind: access-request
+    id: own-request
+    attr:
+      owner_id: patient-user-a
+  another_request:
+    kind: access-request
+    id: another-request
+    attr:
+      owner_id: patient-user-b
+  ward_request:
+    kind: access-request
+    id: ward-request
+    attr:
+      owner_id: child-user-a
+
+tests:
+  - name: Verified clinician can create requests and confirm patient-issued OTPs
+    input:
+      principals: [verified_clinician]
+      resources: [new_request]
+      actions: [create, approve, deny, approve-with-otp, list]
+    expected:
+      - principal: verified_clinician
+        resource: new_request
+        actions:
+          create: EFFECT_ALLOW
+          approve: EFFECT_DENY
+          deny: EFFECT_DENY
+          approve-with-otp: EFFECT_ALLOW
+          list: EFFECT_DENY
+
+  - name: Unverified clinician cannot create or confirm access requests
+    input:
+      principals: [unverified_clinician]
+      resources: [new_request]
+      actions: [create, approve-with-otp]
+    expected:
+      - principal: unverified_clinician
+        resource: new_request
+        actions:
+          create: EFFECT_DENY
+          approve-with-otp: EFFECT_DENY
+
+  - name: Patient can decide only their own request
+    input:
+      principals: [patient]
+      resources: [own_request, another_request, new_request]
+      actions: [approve, deny, create, list]
+    expected:
+      - principal: patient
+        resource: own_request
+        actions:
+          approve: EFFECT_ALLOW
+          deny: EFFECT_ALLOW
+          create: EFFECT_DENY
+          list: EFFECT_ALLOW
+      - principal: patient
+        resource: another_request
+        actions:
+          approve: EFFECT_DENY
+          deny: EFFECT_DENY
+          create: EFFECT_DENY
+          list: EFFECT_ALLOW
+      - principal: patient
+        resource: new_request
+        actions:
+          approve: EFFECT_DENY
+          deny: EFFECT_DENY
+          create: EFFECT_DENY
+          list: EFFECT_ALLOW
+
+  - name: Guardian can decide only a verified ward request
+    input:
+      principals: [guardian]
+      resources: [ward_request, another_request, new_request]
+      actions: [approve, deny, create, list]
+    expected:
+      - principal: guardian
+        resource: ward_request
+        actions:
+          approve: EFFECT_ALLOW
+          deny: EFFECT_ALLOW
+          create: EFFECT_DENY
+          list: EFFECT_ALLOW
+      - principal: guardian
+        resource: another_request
+        actions:
+          approve: EFFECT_DENY
+          deny: EFFECT_DENY
+          create: EFFECT_DENY
+          list: EFFECT_ALLOW
+      - principal: guardian
+        resource: new_request
+        actions:
+          approve: EFFECT_DENY
+          deny: EFFECT_DENY
+          create: EFFECT_DENY
+          list: EFFECT_ALLOW

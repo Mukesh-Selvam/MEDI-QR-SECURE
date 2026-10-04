@@ -1,0 +1,117 @@
+name: ConsentTestSuite
+description: Patient, guardian, and grantee consent access boundaries
+
+principals:
+  patient:
+    id: patient-user-a
+    roles: ["patient"]
+  another_patient:
+    id: patient-user-b
+    roles: ["patient"]
+  guardian:
+    id: guardian-user
+    roles: ["guardian"]
+    attr:
+      guardian_ward_ids: ["child-user-a"]
+  verified_clinician:
+    id: clinician-a
+    roles: ["clinician"]
+    attr:
+      is_verified: true
+  another_clinician:
+    id: clinician-b
+    roles: ["clinician"]
+    attr:
+      is_verified: true
+  unverified_clinician:
+    id: clinician-a
+    roles: ["clinician"]
+    attr:
+      is_verified: false
+
+resources:
+  patient_consent:
+    kind: consent
+    id: consent-a
+    attr:
+      owner_id: patient-user-a
+      grantee_id: clinician-a
+  ward_consent:
+    kind: consent
+    id: consent-child
+    attr:
+      owner_id: child-user-a
+      grantee_id: clinician-a
+  another_grantee_consent:
+    kind: consent
+    id: consent-other-grantee
+    attr:
+      owner_id: patient-user-a
+      grantee_id: clinician-b
+
+tests:
+  - name: Patient can read or revoke only their own consent
+    input:
+      principals: [patient, another_patient]
+      resources: [patient_consent]
+      actions: [read, revoke]
+    expected:
+      - principal: patient
+        resource: patient_consent
+        actions:
+          read: EFFECT_ALLOW
+          revoke: EFFECT_ALLOW
+      - principal: another_patient
+        resource: patient_consent
+        actions:
+          read: EFFECT_DENY
+          revoke: EFFECT_DENY
+
+  - name: Guardian can read or revoke only a ward consent
+    input:
+      principals: [guardian]
+      resources: [ward_consent, patient_consent]
+      actions: [read, revoke]
+    expected:
+      - principal: guardian
+        resource: ward_consent
+        actions:
+          read: EFFECT_ALLOW
+          revoke: EFFECT_ALLOW
+      - principal: guardian
+        resource: patient_consent
+        actions:
+          read: EFFECT_DENY
+          revoke: EFFECT_DENY
+
+  - name: Only the verified grantee clinician can read a consent
+    input:
+      principals: [verified_clinician, another_clinician, unverified_clinician]
+      resources: [patient_consent, another_grantee_consent]
+      actions: [read, revoke]
+    expected:
+      - principal: verified_clinician
+        resource: patient_consent
+        actions:
+          read: EFFECT_ALLOW
+          revoke: EFFECT_DENY
+      - principal: verified_clinician
+        resource: another_grantee_consent
+        actions:
+          read: EFFECT_DENY
+          revoke: EFFECT_DENY
+      - principal: another_clinician
+        resource: patient_consent
+        actions:
+          read: EFFECT_DENY
+          revoke: EFFECT_DENY
+      - principal: another_clinician
+        resource: another_grantee_consent
+        actions:
+          read: EFFECT_ALLOW
+          revoke: EFFECT_DENY
+      - principal: unverified_clinician
+        resource: patient_consent
+        actions:
+          read: EFFECT_DENY
+          revoke: EFFECT_DENY

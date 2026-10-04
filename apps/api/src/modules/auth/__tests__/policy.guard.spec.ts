@@ -386,4 +386,17 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
     );
     expect(mocks.checkResource).not.toHaveBeenCalled();
   });
+
+  it("fails closed when Cerbos is unreachable", async () => {
+    mocks.checkResource.mockRejectedValue(new Error("PDP unavailable"));
+    mocks.queryResults = [
+      [{ patientId: "patient-a" }],
+      [{ id: "patient-a", userId: "user-a" }],
+    ];
+    const context = createContext(reflector, patientA, { id: "document-a" });
+
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      /policy engine unavailable/i
+    );
+  });
 });

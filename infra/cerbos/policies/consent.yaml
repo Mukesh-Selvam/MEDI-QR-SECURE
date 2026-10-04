@@ -1,0 +1,28 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: consent
+  version: default
+  rules:
+    - actions: ["read", "revoke"]
+      roles: ["patient"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: request.resource.attr.owner_id == request.principal.id
+    - actions: ["read", "revoke"]
+      roles: ["guardian"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: >
+            request.principal.attr.guardian_ward_ids.exists(wardId, wardId == request.resource.attr.owner_id)
+    - actions: ["read"]
+      roles: ["clinician"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.principal.attr.is_verified == true
+              - expr: request.resource.attr.grantee_id == request.principal.id
