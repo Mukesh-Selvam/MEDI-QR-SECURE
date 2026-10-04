@@ -8,6 +8,10 @@ import type { StorageService } from "../storage/storage.service.js";
 const mocks = vi.hoisted(() => ({
   selectResults: [] as unknown[],
   select: vi.fn(),
+  transactionClient: {},
+  transaction: vi.fn((callback: (transaction: object) => unknown) =>
+    callback(mocks.transactionClient)
+  ),
   audit: vi.fn(),
   signUrl: vi.fn(),
   getObject: vi.fn(),
@@ -27,9 +31,7 @@ vi.mock("../../auth/patient-access.js", () => ({
 vi.mock("../../../database/index.js", () => ({
   db: {
     select: mocks.select,
-    transaction: vi.fn((callback: (transaction: object) => unknown) =>
-      callback({})
-    ),
+    transaction: mocks.transaction,
   },
 }));
 
@@ -117,12 +119,13 @@ describe("VaultService read audit ordering", () => {
       service.generateViewUrl(
         readyDocument.id,
         "00000000-0000-0000-0000-000000000001",
-        "patient",
+        "clinician",
         "a".repeat(64)
       )
     ).rejects.toThrow("audit insert failed");
 
     expect(mocks.signUrl).not.toHaveBeenCalled();
+    expect(mocks.notificationRecords).not.toHaveBeenCalled();
   });
 
   it("does not fetch or decrypt stream bytes when the audit transaction fails", async () => {
@@ -133,13 +136,14 @@ describe("VaultService read audit ordering", () => {
       service.getDecryptedDocument(
         readyDocument.id,
         "00000000-0000-0000-0000-000000000001",
-        "patient",
+        "clinician",
         "a".repeat(64)
       )
     ).rejects.toThrow("audit insert failed");
 
     expect(mocks.getObject).not.toHaveBeenCalled();
     expect(mocks.decrypt).not.toHaveBeenCalled();
+    expect(mocks.notificationRecords).not.toHaveBeenCalled();
   });
 
   it("commits the audit event before signing the URL", async () => {
@@ -273,6 +277,11 @@ describe("VaultService read audit ordering", () => {
       "DOCUMENT_READ",
       "00000000-0000-0000-0000-000000000004",
       expect.any(Object)
+    );
+    expect(mocks.transaction).toHaveBeenCalledTimes(2);
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "DOCUMENT_VIEWED" }),
+      mocks.transactionClient
     );
   });
 
