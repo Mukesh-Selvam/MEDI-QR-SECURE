@@ -4,12 +4,28 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 
 export default function RequestAccessPage() {
-  const [credentialPresent, setCredentialPresent] = useState(false);
+  const [resolutionId, setResolutionId] = useState<string | null>(null);
+  const [resolutionError, setResolutionError] = useState<string | null>(null);
 
   useEffect(() => {
-    const hasCredential = window.location.hash.length > 1;
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
+    const token = fragment.get("credential") ?? fragment.get("qr");
     window.history.replaceState(null, "", window.location.pathname);
-    setCredentialPresent(hasCredential);
+    if (!token) return;
+
+    const id = window.crypto.randomUUID();
+    setResolutionId(id);
+    void fetch("/api/v1/qr/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, resolutionId: id }),
+      cache: "no-store",
+      referrerPolicy: "no-referrer",
+    }).then((response) => {
+      if (!response.ok) setResolutionError("QR resolution is temporarily unavailable.");
+    }).catch(() => {
+      setResolutionError("QR resolution is temporarily unavailable.");
+    });
   }, []);
 
   return (
@@ -21,13 +37,16 @@ export default function RequestAccessPage() {
           information. A patient must review and approve any request before records can be
           viewed.
         </p>
-        {credentialPresent && (
+        {resolutionId && (
           <p className="mt-5 rounded-lg bg-[#FDF1ED] p-3 text-sm">
             QR received. Sign in through the staff portal to continue the secure request flow.
           </p>
         )}
+        {resolutionError && <p role="alert" className="mt-4 text-sm text-red-700">{resolutionError}</p>}
         <Link
           href="/login/clinician"
+          target="_blank"
+          rel="noopener noreferrer"
           className="mt-6 inline-flex min-h-11 items-center rounded-lg bg-[#4A1D3F] px-5 py-3 text-sm font-semibold text-white"
         >
           Continue to staff sign-in
