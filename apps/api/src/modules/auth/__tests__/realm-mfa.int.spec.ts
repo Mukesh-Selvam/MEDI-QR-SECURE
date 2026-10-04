@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 interface KeycloakUser {
@@ -18,9 +19,16 @@ interface AuthenticationFlow {
 
 interface AuthenticationExecution {
   authenticationFlow?: boolean;
+  authenticationConfig?: string;
   displayName?: string;
+  flowAlias?: string;
+  id?: string;
   providerId?: string;
   requirement: string;
+}
+
+interface AuthenticatorConfig {
+  config: Record<string, string>;
 }
 
 interface KeycloakClient {
@@ -149,16 +157,104 @@ describe("Keycloak staff MFA (integration)", () => {
     expect(mfaExecutions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          providerId: "auth-otp-form",
+          providerId: "webauthn-authenticator",
           requirement: "ALTERNATIVE",
         }),
         expect.objectContaining({
-          providerId: "webauthn-authenticator",
+          displayName: "mediqr-mfa-totp",
+          authenticationFlow: true,
           requirement: "ALTERNATIVE",
         }),
       ])
     );
+    const webauthnExecution = mfaExecutions.find(
+      ({ providerId }) => providerId === "webauthn-authenticator"
+    );
+    if (!webauthnExecution?.authenticationConfig) {
+      throw new Error("WebAuthn MFA evidence is not configured.");
+    }
+    const webauthnConfigResponse = await keycloakRequest(
+      `/admin/realms/${realm}/authentication/config/${webauthnExecution.authenticationConfig}`
+    );
+    expect(webauthnConfigResponse.status).toBe(200);
+    const webauthnConfig =
+      (await webauthnConfigResponse.json()) as AuthenticatorConfig;
+    expect(webauthnConfig.config).toMatchObject({
+      "default.reference.value": "webauthn",
+      "default.reference.maxAge": "300",
+    });
+    const totpResponse = await keycloakRequest(
+      `/admin/realms/${realm}/authentication/flows/mediqr-mfa-totp/executions`
+    );
+    expect(totpResponse.status).toBe(200);
+    const totpExecutions =
+      (await totpResponse.json()) as AuthenticationExecution[];
+    expect(totpExecutions).toContainEqual(
+      expect.objectContaining({
+        providerId: "auth-otp-form",
+        requirement: "REQUIRED",
+      })
+    );
+    const otpExecution = totpExecutions.find(
+      ({ providerId }) => providerId === "auth-otp-form"
+    );
+    if (!otpExecution?.authenticationConfig) {
+      throw new Error("TOTP MFA evidence is not configured.");
+    }
+    const otpConfigResponse = await keycloakRequest(
+      `/admin/realms/${realm}/authentication/config/${otpExecution.authenticationConfig}`
+    );
+    expect(otpConfigResponse.status).toBe(200);
+    const otpConfig = (await otpConfigResponse.json()) as AuthenticatorConfig;
+    expect(otpConfig.config).toMatchObject({
+      "default.reference.value": "otp",
+      "default.reference.maxAge": "300",
+    });
   }, 30000);
+
+  it("allows users without a credential to complete the required MFA setup action", () => {
+    const realmExport = JSON.parse(
+      readFileSync(
+        new URL(
+          "../../../../../../infra/docker/keycloak/realm-export.json",
+          import.meta.url
+        ),
+        "utf8"
+      )
+    ) as {
+      authenticationFlows: Array<{
+        alias: string;
+        authenticationExecutions: Array<{
+          authenticator: string;
+          userSetupAllowed: boolean;
+          authenticatorConfig?: string;
+        }>;
+      }>;
+    };
+    const mfaFlow = realmExport.authenticationFlows.find(
+      ({ alias }) => alias === "mediqr-mfa"
+    );
+    expect(mfaFlow?.authenticationExecutions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          authenticator: "webauthn-authenticator",
+          userSetupAllowed: true,
+          authenticatorConfig: "mediqr-webauthn-amr",
+        }),
+      ])
+    );
+    const totpFlow = realmExport.authenticationFlows.find(
+      ({ alias }) => alias === "mediqr-mfa-totp"
+    );
+    expect(totpFlow?.authenticationExecutions).toContainEqual(
+      expect.objectContaining({
+        authenticator: "auth-otp-form",
+        requirement: "REQUIRED",
+        userSetupAllowed: true,
+        authenticatorConfig: "mediqr-otp-amr",
+      })
+    );
+  });
 
   it("includes Keycloak completed authentication methods in access tokens", async () => {
     const clientsResponse = await keycloakRequest(

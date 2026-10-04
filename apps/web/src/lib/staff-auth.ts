@@ -8,7 +8,7 @@ import {
   STAFF_CSRF_COOKIE,
   STAFF_REFRESH_COOKIE,
   STAFF_REFRESH_LIFETIME_SECONDS,
-} from "./staff-oidc.js";
+} from "./staff-oidc";
 
 const COOKIE_FLAGS = {
   httpOnly: true,

@@ -7,6 +7,7 @@ import {
 import {
   isValidTokenResponse,
   getOidcConfig,
+  StaffMfaRequiredError,
   verifyIdToken,
   verifyStaffAccessToken,
 } from "@/lib/staff-oidc";
@@ -79,7 +80,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       refreshLifetimeSeconds: refreshLifetime,
     });
     return response;
-  } catch {
+  } catch (error) {
+    if (error instanceof StaffMfaRequiredError) {
+      console.warn("Staff OIDC login did not include MFA evidence.", {
+        methods: error.methods,
+      });
+      return failedCallback(config.webOrigin, "mfa-setup");
+    }
+    console.error("Staff OIDC callback validation failed.", {
+      name: error instanceof Error ? error.name : "UnknownError",
+      message: error instanceof Error ? error.message : "Unknown failure",
+    });
     return failedCallback(config.webOrigin);
   }
 }
@@ -93,9 +104,12 @@ function safeEqual(left: string, right: string): boolean {
   );
 }
 
-function failedCallback(origin: string): NextResponse {
+function failedCallback(
+  origin: string,
+  authResult: "failed" | "mfa-setup" = "failed"
+): NextResponse {
   const response = NextResponse.redirect(
-    new URL("/login/clinician?auth=failed", origin)
+    new URL(`/login/clinician?auth=${authResult}`, origin)
   );
   clearOidcTemporaryCookies(response);
   return response;

@@ -274,4 +274,51 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       })
     );
   });
+
+  it("allows an unverified clinician to read only their own authentication status", async () => {
+    const clinician: AuthenticatedUser = {
+      id: "clinician-user",
+      sub: "clinician-sub",
+      role: "clinician",
+      isVerified: false,
+    };
+    mocks.checkResource.mockResolvedValue({ isAllowed: () => true });
+    const context = createContext(
+      reflector,
+      clinician,
+      {},
+      "auth",
+      "read"
+    );
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(mocks.checkResource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        principal: expect.objectContaining({ id: "clinician-user" }),
+        resource: expect.objectContaining({ kind: "auth" }),
+        actions: ["read"],
+      })
+    );
+  });
+
+  it("continues to deny clinicians patient data until Phase 3 consent", async () => {
+    const clinician: AuthenticatedUser = {
+      id: "clinician-user",
+      sub: "clinician-sub",
+      role: "clinician",
+      isVerified: true,
+    };
+    const context = createContext(
+      reflector,
+      clinician,
+      { patientId: "patient-id" },
+      "patient",
+      "read"
+    );
+
+    await expect(guard.canActivate(context)).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+    expect(mocks.checkResource).not.toHaveBeenCalled();
+  });
 });

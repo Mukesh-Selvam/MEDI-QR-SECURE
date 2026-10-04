@@ -17,6 +17,18 @@ const ACCEPTED_MFA_METHODS = new Set(["otp", "webauthn"]);
 const URL_SCHEME = /^https:\/\//i;
 const LOCAL_WEB_ORIGIN = "http://localhost:3000";
 
+export class StaffMfaRequiredError extends Error {
+  readonly methods: string[];
+
+  constructor(methods: unknown) {
+    super("Staff access token does not prove an accepted MFA method.");
+    this.name = "StaffMfaRequiredError";
+    this.methods = Array.isArray(methods)
+      ? methods.filter((method): method is string => typeof method === "string")
+      : [];
+  }
+}
+
 export interface OidcConfig {
   issuer: string;
   clientId: string;
@@ -110,7 +122,7 @@ export async function verifyStaffAccessToken(
         typeof method === "string" && ACCEPTED_MFA_METHODS.has(method)
     )
   ) {
-    throw new Error("Staff access token does not prove an accepted MFA method.");
+    throw new StaffMfaRequiredError(methods);
   }
 
   return payload;

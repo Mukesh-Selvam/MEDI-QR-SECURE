@@ -109,20 +109,54 @@
       "builtIn": false,
       "authenticationExecutions": [
         {
-          "authenticator": "auth-otp-form",
-          "authenticatorFlow": false,
-          "requirement": "ALTERNATIVE",
-          "priority": 10,
-          "userSetupAllowed": false
-        },
-        {
           "authenticator": "webauthn-authenticator",
           "authenticatorFlow": false,
           "requirement": "ALTERNATIVE",
+          "priority": 10,
+          "userSetupAllowed": true,
+          "authenticatorConfig": "mediqr-webauthn-amr"
+        },
+        {
+          "authenticator": "auth-forms",
+          "authenticatorFlow": true,
+          "requirement": "ALTERNATIVE",
           "priority": 20,
-          "userSetupAllowed": false
+          "flowAlias": "mediqr-mfa-totp"
         }
       ]
+    },
+    {
+      "alias": "mediqr-mfa-totp",
+      "description": "Require TOTP and enroll users who do not have a factor",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-otp-form",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": true,
+          "authenticatorConfig": "mediqr-otp-amr"
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "mediqr-otp-amr",
+      "config": {
+        "default.reference.value": "otp",
+        "default.reference.maxAge": "300"
+      }
+    },
+    {
+      "alias": "mediqr-webauthn-amr",
+      "config": {
+        "default.reference.value": "webauthn",
+        "default.reference.maxAge": "300"
+      }
     }
   ],
   "clients": [

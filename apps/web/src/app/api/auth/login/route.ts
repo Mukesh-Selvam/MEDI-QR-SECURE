@@ -17,6 +17,7 @@ export async function GET(): Promise<NextResponse> {
     response_type: "code",
     response_mode: "query",
     scope: "openid profile email",
+    prompt: "login",
     redirect_uri: config.callbackUrl,
     state,
     nonce,

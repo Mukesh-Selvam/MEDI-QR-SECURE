@@ -77,6 +77,17 @@ export default function ClinicianLoginPage() {
   }, [loadSession]);
 
   useEffect(() => {
+    const authResult = new URLSearchParams(window.location.search).get("auth");
+    if (authResult === "mfa-setup") {
+      setError(
+        "Your second factor is now enrolled. Sign in again to complete secure authentication."
+      );
+    } else if (authResult === "failed") {
+      setError("We could not complete secure sign-in. Please try again.");
+    }
+  }, []);
+
+  useEffect(() => {
     if (!session) return;
     const timer = window.setInterval(() => void refreshSession(), 240_000);
     const refreshOnReturn = () => {
