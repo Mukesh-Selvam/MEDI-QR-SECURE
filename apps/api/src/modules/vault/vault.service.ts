@@ -39,6 +39,18 @@ import { env } from "../../config/env.js";
 
 export type DocumentType = "scan" | "lab" | "prescription" | "vaccination" | "discharge";
 export type UploadSource = "patient-uploaded" | "facility-verified";
+export type StreamContentType = "application/pdf" | "image/jpeg" | "image/png";
+
+function getStreamContentType(value: string): StreamContentType {
+  switch (value) {
+    case "application/pdf":
+    case "image/jpeg":
+    case "image/png":
+      return value;
+    default:
+      throw new BadRequestException("Document content type is not supported for streaming");
+  }
+}
 
 export interface UploadDocumentInput {
   /** Buffer of the file (raw bytes from multipart) */
@@ -258,7 +270,7 @@ export class VaultService {
     purpose: string = "clinical-care"
   ): Promise<{
     buffer: Buffer;
-    mimeType: string;
+    mimeType: StreamContentType;
     sourceLabel: "verified-source" | "patient-uploaded";
     patientId: string;
   }> {
@@ -274,6 +286,7 @@ export class VaultService {
         `Document is not available for viewing (status: ${doc.status})`
       );
     }
+    const mimeType = getStreamContentType(doc.mimeType);
 
     await this.audit.logInTransaction({
       actorId,
@@ -313,7 +326,7 @@ export class VaultService {
 
     return {
       buffer: plaintext,
-      mimeType: doc.mimeType,
+      mimeType,
       sourceLabel: doc.uploadSource === "facility-verified" ? "verified-source" : "patient-uploaded",
       patientId: doc.patientId,
     };

@@ -139,4 +139,77 @@ describe("VaultService read audit ordering", () => {
 
     expect(operations).toEqual(["audit-committed", "url-signed"]);
   });
+
+  it("commits the audit event before fetching and decrypting stream bytes", async () => {
+    const operations: string[] = [];
+    mocks.selectResults = [
+      [readyDocument],
+      [{
+        wrappedDek: "wrapped",
+        kmsKeyId: "kms-key",
+        iv: "iv",
+        authTag: "tag",
+        sha256Plaintext: "a".repeat(64),
+      }],
+    ];
+    mocks.audit.mockImplementation(async () => {
+      operations.push("audit-committed");
+    });
+    mocks.getObject.mockImplementation(async () => {
+      operations.push("ciphertext-fetched");
+      return Buffer.from("ciphertext");
+    });
+    mocks.decrypt.mockImplementation(async () => {
+      operations.push("plaintext-decrypted");
+      return Buffer.from("document bytes");
+    });
+    const service = buildService();
+
+    await service.getDecryptedDocument(
+      readyDocument.id,
+      "00000000-0000-0000-0000-000000000001",
+      "patient",
+      "a".repeat(64)
+    );
+
+    expect(operations).toEqual([
+      "audit-committed",
+      "ciphertext-fetched",
+      "plaintext-decrypted",
+    ]);
+  });
+
+  it("refuses to audit or read a document that is not ready", async () => {
+    mocks.selectResults = [[{ ...readyDocument, status: "quarantined" }]];
+    const service = buildService();
+
+    await expect(
+      service.getDecryptedDocument(
+        readyDocument.id,
+        "00000000-0000-0000-0000-000000000001",
+        "patient",
+        "a".repeat(64)
+      )
+    ).rejects.toThrow(/not available for viewing/);
+
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(mocks.getObject).not.toHaveBeenCalled();
+  });
+
+  it("rejects a content type outside the server-supported fixed set", async () => {
+    mocks.selectResults = [[{ ...readyDocument, mimeType: "text/html" }]];
+    const service = buildService();
+
+    await expect(
+      service.getDecryptedDocument(
+        readyDocument.id,
+        "00000000-0000-0000-0000-000000000001",
+        "patient",
+        "a".repeat(64)
+      )
+    ).rejects.toThrow(/content type is not supported/);
+
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(mocks.getObject).not.toHaveBeenCalled();
+  });
 });

@@ -192,7 +192,7 @@ export class VaultController {
       purpose,
     );
 
-    reply.header("Cache-Control", "no-store, no-cache, must-revalidate, private");
+    reply.header("Cache-Control", "no-store");
     reply.header("Pragma", "no-cache");
     reply.header("Expires", "0");
     reply.header("Content-Type", mimeType);
