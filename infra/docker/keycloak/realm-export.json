@@ -44,6 +44,87 @@
       "config": {}
     }
   ],
+  "browserFlow": "mediqr-browser-mfa",
+  "authenticationFlows": [
+    {
+      "alias": "mediqr-browser-mfa",
+      "description": "Browser authentication requiring a password and an enrolled MFA method",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-cookie",
+          "authenticatorFlow": false,
+          "requirement": "ALTERNATIVE",
+          "priority": 10,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticator": "identity-provider-redirector",
+          "authenticatorFlow": false,
+          "requirement": "DISABLED",
+          "priority": 20,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticator": "auth-forms",
+          "authenticatorFlow": true,
+          "requirement": "ALTERNATIVE",
+          "priority": 30,
+          "flowAlias": "mediqr-browser-forms",
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "alias": "mediqr-browser-forms",
+      "description": "Username and password followed by mandatory TOTP or WebAuthn",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-username-password-form",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticator": "auth-forms",
+          "authenticatorFlow": true,
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "flowAlias": "mediqr-mfa",
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "alias": "mediqr-mfa",
+      "description": "Complete either TOTP or WebAuthn authentication",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-otp-form",
+          "authenticatorFlow": false,
+          "requirement": "ALTERNATIVE",
+          "priority": 10,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticator": "webauthn-authenticator",
+          "authenticatorFlow": false,
+          "requirement": "ALTERNATIVE",
+          "priority": 20,
+          "userSetupAllowed": false
+        }
+      ]
+    }
+  ],
   "clients": [
   {
     "clientId": "mediqr-web",
@@ -58,6 +139,18 @@
     "webOrigins": ["http://localhost:3000"],
     "defaultClientScopes": ["web-origins", "profile", "roles", "email"],
     "optionalClientScopes": [],
+    "protocolMappers": [
+      {
+        "name": "MediQR authentication methods",
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-amr-mapper",
+        "consentRequired": false,
+        "config": {
+          "access.token.claim": "true",
+          "id.token.claim": "false"
+        }
+      }
+    ],
     "attributes": {
       "pkce.code.challenge.method": "S256",
       "post.logout.redirect.uris": "http://localhost:3000/",

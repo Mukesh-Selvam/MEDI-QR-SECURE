@@ -17,6 +17,7 @@ describe("staff access token validation", () => {
       issuer: ISSUER,
       azp: CLIENT_ID,
       audience: "account",
+      authenticationMethods: ["pwd", "otp"],
       expiration: "5m",
     });
 
@@ -69,6 +70,7 @@ describe("staff access token validation", () => {
       issuer: ISSUER,
       audience: "wrong-client",
       azp: "wrong-client",
+      authenticationMethods: ["otp"],
       expiration: "5m",
     });
 
@@ -76,12 +78,51 @@ describe("staff access token validation", () => {
       verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID)
     ).rejects.toThrow(/audience/i);
   });
+
+  it("rejects a correctly signed staff token without MFA evidence", async () => {
+    const { token, getKey } = await createSignedToken({
+      issuer: ISSUER,
+      azp: CLIENT_ID,
+      expiration: "5m",
+    });
+
+    await expect(
+      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID)
+    ).rejects.toThrow(/MFA method/i);
+  });
+
+  it("rejects a token that proves only password authentication", async () => {
+    const { token, getKey } = await createSignedToken({
+      issuer: ISSUER,
+      azp: CLIENT_ID,
+      authenticationMethods: ["pwd"],
+      expiration: "5m",
+    });
+
+    await expect(
+      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID)
+    ).rejects.toThrow(/MFA method/i);
+  });
+
+  it.each(["otp", "webauthn"])("accepts the %s MFA method", async (method) => {
+    const { token, getKey } = await createSignedToken({
+      issuer: ISSUER,
+      azp: CLIENT_ID,
+      authenticationMethods: ["pwd", method],
+      expiration: "5m",
+    });
+
+    await expect(
+      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID)
+    ).resolves.toMatchObject({ amr: ["pwd", method] });
+  });
 });
 
 async function createSignedToken(options: {
   issuer: string;
   azp?: string;
   audience?: string;
+  authenticationMethods?: string[];
   expiration: string;
 }): Promise<{
   token: string;
@@ -93,7 +134,10 @@ async function createSignedToken(options: {
     keys: [{ ...publicJwk, kid: "test-key", alg: "RS256", use: "sig" }],
   });
 
-  let builder = new SignJWT(options.azp ? { azp: options.azp } : {})
+  const claims: Record<string, unknown> = {};
+  if (options.azp) claims["azp"] = options.azp;
+  if (options.authenticationMethods) claims["amr"] = options.authenticationMethods;
+  let builder = new SignJWT(claims)
     .setProtectedHeader({ alg: "RS256", kid: "test-key" })
     .setIssuer(options.issuer)
     .setSubject("keycloak-user")

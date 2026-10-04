@@ -11,6 +11,31 @@ interface KeycloakRole {
   name: string;
 }
 
+interface AuthenticationFlow {
+  id: string;
+  alias: string;
+}
+
+interface AuthenticationExecution {
+  authenticationFlow?: boolean;
+  displayName?: string;
+  providerId?: string;
+  requirement: string;
+}
+
+interface KeycloakClient {
+  id: string;
+}
+
+interface KeycloakRealm {
+  browserFlow: string;
+}
+
+interface ProtocolMapper {
+  protocolMapper: string;
+  config: Record<string, string>;
+}
+
 describe("Keycloak staff MFA (integration)", () => {
   const keycloakBaseUrl =
     process.env.KEYCLOAK_BASE_URL ?? "http://127.0.0.1:8080";
@@ -87,6 +112,77 @@ describe("Keycloak staff MFA (integration)", () => {
     expect(userResponse.status).toBe(200);
     const user = (await userResponse.json()) as KeycloakUser;
     expect(user.requiredActions).toContain("CONFIGURE_TOTP");
+  }, 30000);
+
+  it("requires an existing TOTP or WebAuthn credential for browser authentication", async () => {
+    const realmResponse = await keycloakRequest(`/admin/realms/${realm}`);
+    expect(realmResponse.status).toBe(200);
+    const realmConfiguration = (await realmResponse.json()) as KeycloakRealm;
+    expect(realmConfiguration.browserFlow).toBe("mediqr-browser-mfa");
+
+    const flowsResponse = await keycloakRequest(
+      `/admin/realms/${realm}/authentication/flows`
+    );
+    expect(flowsResponse.status).toBe(200);
+    const flows = (await flowsResponse.json()) as AuthenticationFlow[];
+    expect(flows.map((flow) => flow.alias)).toContain("mediqr-browser-mfa");
+
+    const formsResponse = await keycloakRequest(
+      `/admin/realms/${realm}/authentication/flows/mediqr-browser-forms/executions`
+    );
+    expect(formsResponse.status).toBe(200);
+    const forms = (await formsResponse.json()) as AuthenticationExecution[];
+    expect(forms).toContainEqual(
+      expect.objectContaining({
+        displayName: "mediqr-mfa",
+        authenticationFlow: true,
+        requirement: "REQUIRED",
+      })
+    );
+
+    const mfaResponse = await keycloakRequest(
+      `/admin/realms/${realm}/authentication/flows/mediqr-mfa/executions`
+    );
+    expect(mfaResponse.status).toBe(200);
+    const mfaExecutions =
+      (await mfaResponse.json()) as AuthenticationExecution[];
+    expect(mfaExecutions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerId: "auth-otp-form",
+          requirement: "ALTERNATIVE",
+        }),
+        expect.objectContaining({
+          providerId: "webauthn-authenticator",
+          requirement: "ALTERNATIVE",
+        }),
+      ])
+    );
+  }, 30000);
+
+  it("includes Keycloak completed authentication methods in access tokens", async () => {
+    const clientsResponse = await keycloakRequest(
+      `/admin/realms/${realm}/clients?clientId=mediqr-web`
+    );
+    expect(clientsResponse.status).toBe(200);
+    const clients = (await clientsResponse.json()) as KeycloakClient[];
+    const clientId = clients[0]?.id;
+    if (!clientId) throw new Error("Keycloak web client was not imported.");
+
+    const mappersResponse = await keycloakRequest(
+      `/admin/realms/${realm}/clients/${clientId}/protocol-mappers/models`
+    );
+    expect(mappersResponse.status).toBe(200);
+    const mappers = (await mappersResponse.json()) as ProtocolMapper[];
+    expect(mappers).toContainEqual(
+      expect.objectContaining({
+        protocolMapper: "oidc-amr-mapper",
+        config: expect.objectContaining({
+          "access.token.claim": "true",
+          "id.token.claim": "false",
+        }),
+      })
+    );
   }, 30000);
 
   async function keycloakRequest(

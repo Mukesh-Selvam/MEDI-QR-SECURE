@@ -125,7 +125,7 @@ describe("Staff Keycloak token validation (integration)", () => {
     await pool.end();
   });
 
-  it("validates a real Keycloak token and denies unverified clinicians on patient endpoints", async () => {
+  it("rejects a Keycloak password-only token without MFA evidence", async () => {
     if (!fastify || !staffAccessToken) {
       throw new Error("The fake clinician or Keycloak access token was not initialized.");
     }
@@ -142,7 +142,7 @@ describe("Staff Keycloak token validation (integration)", () => {
         headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
       }),
     ]);
-    expect(responses.map((response) => response.statusCode)).toEqual([403, 403]);
+    expect(responses.map((response) => response.statusCode)).toEqual([401, 401]);
     expect(localUserId).toBeDefined();
   });
 

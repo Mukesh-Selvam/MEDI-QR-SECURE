@@ -5,6 +5,7 @@ import {
 } from "jose";
 
 const CLOCK_TOLERANCE_SECONDS = 5;
+const ACCEPTED_MFA_METHODS = new Set(["otp", "webauthn"]);
 
 export async function verifyStaffAccessToken(
   token: string,
@@ -28,6 +29,17 @@ export async function verifyStaffAccessToken(
   const authorizedPartyMatches = payload.azp === clientId;
   if (!audienceMatches && !authorizedPartyMatches) {
     throw new Error("Staff access token audience is invalid");
+  }
+
+  const authenticationMethods = payload.amr;
+  if (
+    !Array.isArray(authenticationMethods) ||
+    !authenticationMethods.some(
+      (method) =>
+        typeof method === "string" && ACCEPTED_MFA_METHODS.has(method)
+    )
+  ) {
+    throw new Error("Staff access token does not prove an accepted MFA method");
   }
 
   return payload;
