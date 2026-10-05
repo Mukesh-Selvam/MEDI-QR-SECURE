@@ -24,7 +24,6 @@ resourcePolicy:
               - expr: request.principal.attr.provider_type == "hospital-emergency-department"
               - expr: request.resource.attr.facility_id == request.principal.attr.facility_id
               - expr: request.resource.attr.provider_type == "hospital-emergency-department"
-              - expr: request.resource.attr.profile_enabled == true
 
     - actions: ["request"]
       roles: ["pharmacy-staff"]
@@ -39,9 +38,8 @@ resourcePolicy:
               - expr: request.principal.attr.provider_type == "pharmacy"
               - expr: request.resource.attr.facility_id == request.principal.attr.facility_id
               - expr: request.resource.attr.provider_type == "pharmacy"
-              - expr: request.resource.attr.profile_enabled == true
 
-    - actions: ["read-hospital-summary"]
+    - actions: ["read-summary"]
       roles: ["emergency-department-staff"]
       effect: EFFECT_ALLOW
       condition:
@@ -59,7 +57,7 @@ resourcePolicy:
               - expr: request.resource.attr.profile_enabled == true
               - expr: request.resource.attr.grant_active == true
 
-    - actions: ["read-allergies"]
+    - actions: ["read-summary"]
       roles: ["pharmacy-staff"]
       effect: EFFECT_ALLOW
       condition:

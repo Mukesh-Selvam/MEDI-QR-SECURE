@@ -92,6 +92,20 @@
       "when": 1791189776697,
       "tag": "0012_facility_affiliation_controls",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791191140570,
+      "tag": "0013_emergency_access_notification_event",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791192928753,
+      "tag": "0014_emergency_email_outbox",
+      "breakpoints": true
     }
   ]
 }

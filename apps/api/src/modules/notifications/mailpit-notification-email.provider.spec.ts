@@ -57,6 +57,29 @@ describe("MailpitNotificationEmailProvider", () => {
     });
   });
 
+  it("uses generic wording for emergency-access notifications", async () => {
+    const provider = new MailpitNotificationEmailProvider(config);
+    const requestId = "00000000-0000-0000-0000-000000000001";
+    const createdAt = new Date("2026-01-02T03:04:05.000Z");
+
+    await provider.send({
+      recipient: "fake-patient@mediqr.invalid",
+      eventType: "EMERGENCY_ACCESS_GRANTED",
+      requestId,
+      createdAt,
+    });
+
+    const sentEmail = mocks.sendMail.mock.calls[0]?.[0] as
+      { text: string } | undefined;
+    expect(sentEmail?.text).toContain("An emergency access event occurred.");
+    expect(sentEmail?.text).toContain(
+      "Sign in to your MediQR account to review this notification.",
+    );
+    expect(sentEmail?.text).not.toContain("EMERGENCY_ACCESS_GRANTED");
+    expect(sentEmail?.text).not.toContain("allergies");
+    expect(sentEmail?.text).toContain(requestId);
+  });
+
   it("converts transport errors to a sanitized delivery error", async () => {
     mocks.sendMail.mockRejectedValue(new Error("sensitive transport detail"));
     const provider = new MailpitNotificationEmailProvider(config);
@@ -67,7 +90,7 @@ describe("MailpitNotificationEmailProvider", () => {
         eventType: "ACCESS_REQUESTED",
         requestId: "00000000-0000-0000-0000-000000000001",
         createdAt: new Date(),
-      })
+      }),
     ).rejects.toBeInstanceOf(NotificationEmailDeliveryError);
   });
 });

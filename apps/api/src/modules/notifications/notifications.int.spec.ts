@@ -13,7 +13,10 @@ import { NotificationsService } from "./notifications.service.js";
 describe("Notifications (integration)", () => {
   const suffix = randomUUID();
   const requestId = randomUUID();
-  const emailProvider = { send: vi.fn().mockResolvedValue(undefined) };
+  const emailProvider = {
+    enabled: true,
+    send: vi.fn().mockResolvedValue(undefined),
+  };
   const service = new NotificationsService(emailProvider);
   let patientUserId: string;
   let patientId: string;
@@ -25,7 +28,7 @@ describe("Notifications (integration)", () => {
   beforeAll(async () => {
     const migration = await pool.query(
       `select table_name from information_schema.tables
-       where table_schema = 'public' and table_name = 'notifications'`
+       where table_schema = 'public' and table_name = 'notifications'`,
     );
     expect(migration.rows).toHaveLength(1);
 
@@ -95,10 +98,7 @@ describe("Notifications (integration)", () => {
         userId: otherUser.id,
         healthId: `TEST-NOTIFY-OTHER-${suffix}`,
         fullName: "Fake Other Notification Patient",
-        phoneHash: suffix
-          .replaceAll("-", "")
-          .slice(0, 20)
-          .padStart(64, "1"),
+        phoneHash: suffix.replaceAll("-", "").slice(0, 20).padStart(64, "1"),
         encryptedPhone: "test-only-ciphertext",
       })
       .returning({ id: patients.id });
@@ -114,7 +114,9 @@ describe("Notifications (integration)", () => {
 
   afterAll(async () => {
     if (patientId) {
-      await db.delete(notifications).where(eq(notifications.requestId, requestId));
+      await db
+        .delete(notifications)
+        .where(eq(notifications.requestId, requestId));
       await db.delete(patients).where(eq(patients.id, patientId));
     }
     if (guardianPatientId) {
@@ -123,8 +125,10 @@ describe("Notifications (integration)", () => {
     if (otherPatientId) {
       await db.delete(patients).where(eq(patients.id, otherPatientId));
     }
-    if (patientUserId) await db.delete(users).where(eq(users.id, patientUserId));
-    if (guardianUserId) await db.delete(users).where(eq(users.id, guardianUserId));
+    if (patientUserId)
+      await db.delete(users).where(eq(users.id, patientUserId));
+    if (guardianUserId)
+      await db.delete(users).where(eq(users.id, guardianUserId));
     if (otherUserId) await db.delete(users).where(eq(users.id, otherUserId));
     await pool.end();
   });
@@ -142,11 +146,11 @@ describe("Notifications (integration)", () => {
       const deliveries = await service.recordForPatientAndGuardians(
         patientId,
         eventType,
-        requestId
+        requestId,
       );
-      expect(deliveries.map(({ recipientUserId }) => recipientUserId).sort()).toEqual(
-        [patientUserId, guardianUserId].sort()
-      );
+      expect(
+        deliveries.map(({ recipientUserId }) => recipientUserId).sort(),
+      ).toEqual([patientUserId, guardianUserId].sort());
       await service.deliverDevelopmentEmails(deliveries);
     }
 
@@ -159,24 +163,27 @@ describe("Notifications (integration)", () => {
       "readAt",
       "requestId",
     ];
-    for (const notification of [...patientNotifications, ...guardianNotifications]) {
+    for (const notification of [
+      ...patientNotifications,
+      ...guardianNotifications,
+    ]) {
       expect(Object.keys(notification).sort()).toEqual(notificationFields);
       expect(JSON.stringify(notification)).not.toContain(
-        "Fake Notification Patient"
+        "Fake Notification Patient",
       );
     }
     expect(patientNotifications.map(({ eventType }) => eventType)).toEqual(
-      eventTypes
+      eventTypes,
     );
     expect(guardianNotifications.map(({ eventType }) => eventType)).toEqual(
-      eventTypes
+      eventTypes,
     );
     expect(emailProvider.send).toHaveBeenCalledTimes(eventTypes.length * 2);
     expect(emailProvider.send).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: "ACCESS_REQUESTED",
         requestId,
-      })
+      }),
     );
   });
 
@@ -185,20 +192,20 @@ describe("Notifications (integration)", () => {
     await service.recordForPatientAndGuardians(
       otherPatientId,
       "ACCESS_REQUESTED",
-      otherRequestId
+      otherRequestId,
     );
     const patientNotifications = await service.listForUser(patientUserId);
     const otherNotifications = await service.listForUser(otherUserId);
-    expect(patientNotifications.every(({ requestId: id }) => id === requestId)).toBe(
-      true
-    );
+    expect(
+      patientNotifications.every(({ requestId: id }) => id === requestId),
+    ).toBe(true);
     expect(otherNotifications.map(({ requestId: id }) => id)).toEqual([
       otherRequestId,
     ]);
 
     const patientNotification = patientNotifications[0];
     await expect(
-      service.markRead(otherUserId, patientNotification.id)
+      service.markRead(otherUserId, patientNotification.id),
     ).rejects.toThrow("Notification not found");
     await service.markRead(patientUserId, patientNotification.id);
     const [markedRead] = await service.listForUser(patientUserId);

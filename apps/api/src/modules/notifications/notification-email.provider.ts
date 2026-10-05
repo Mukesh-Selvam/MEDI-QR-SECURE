@@ -1,4 +1,6 @@
-export const NOTIFICATION_EMAIL_PROVIDER = Symbol("NOTIFICATION_EMAIL_PROVIDER");
+export const NOTIFICATION_EMAIL_PROVIDER = Symbol(
+  "NOTIFICATION_EMAIL_PROVIDER",
+);
 
 export interface NotificationEmail {
   recipient: string;
@@ -8,6 +10,7 @@ export interface NotificationEmail {
 }
 
 export interface NotificationEmailProvider {
+  readonly enabled: boolean;
   send(notification: NotificationEmail): Promise<void>;
 }
 

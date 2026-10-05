@@ -93,13 +93,6 @@ resources:
       facility_id: 00000000-0000-4000-8000-000000000022
       provider_type: pharmacy
       profile_enabled: true
-  disabled_profile_request:
-    kind: emergency-access
-    id: request-disabled
-    attr:
-      facility_id: 00000000-0000-4000-8000-000000000021
-      provider_type: hospital-emergency-department
-      profile_enabled: false
   ed_grant:
     kind: emergency-access
     id: grant-ed
@@ -121,6 +114,17 @@ resources:
       facility_id: 00000000-0000-4000-8000-000000000022
       provider_type: pharmacy
       profile_enabled: true
+      grant_active: true
+  disabled_profile_grant:
+    kind: emergency-access
+    id: grant-disabled
+    attr:
+      owner_id: 00000000-0000-4000-8000-000000000031
+      grant_owner_id: 00000000-0000-4000-8000-000000000031
+      grantee_id: 00000000-0000-4000-8000-000000000011
+      facility_id: 00000000-0000-4000-8000-000000000021
+      provider_type: hospital-emergency-department
+      profile_enabled: false
       grant_active: true
   wrong_owner_grant:
     kind: emergency-access
@@ -213,31 +217,29 @@ tests:
         actions:
           request: EFFECT_DENY
 
-  - name: ED grant permits only its matching hospital summary
+  - name: ED grant permits its matching emergency summary
     input:
       principals: [emergency_department_staff]
       resources: [ed_grant]
-      actions: [read-hospital-summary, read-allergies]
+      actions: [read-summary]
     expected:
       - principal: emergency_department_staff
         resource: ed_grant
         actions:
-          read-hospital-summary: EFFECT_ALLOW
-          read-allergies: EFFECT_DENY
+          read-summary: EFFECT_ALLOW
 
-  - name: Pharmacy grant permits allergies only
+  - name: Pharmacy grant permits only its allergies summary
     input:
       principals: [pharmacy_staff]
       resources: [pharmacy_grant]
-      actions: [read-hospital-summary, read-allergies]
+      actions: [read-summary]
     expected:
       - principal: pharmacy_staff
         resource: pharmacy_grant
         actions:
-          read-hospital-summary: EFFECT_DENY
-          read-allergies: EFFECT_ALLOW
+          read-summary: EFFECT_ALLOW
 
-  - name: Emergency access denies without MFA, verified facility, or enabled profile
+  - name: Emergency access denies without MFA or verified facility
     input:
       principals: [ed_staff_without_mfa]
       resources: [ed_request]
@@ -259,52 +261,49 @@ tests:
         actions:
           request: EFFECT_DENY
 
-  - name: Disabled emergency profile is denied
+  - name: Disabled emergency profile denies summary access
     input:
       principals: [emergency_department_staff]
-      resources: [disabled_profile_request]
-      actions: [request]
+      resources: [disabled_profile_grant]
+      actions: [read-summary]
     expected:
       - principal: emergency_department_staff
-        resource: disabled_profile_request
+        resource: disabled_profile_grant
         actions:
-          request: EFFECT_DENY
+          read-summary: EFFECT_DENY
 
   - name: Grant owner binding is checked before reading
     input:
       principals: [emergency_department_staff]
       resources: [wrong_owner_grant]
-      actions: [read-hospital-summary]
+      actions: [read-summary]
     expected:
       - principal: emergency_department_staff
         resource: wrong_owner_grant
         actions:
-          read-hospital-summary: EFFECT_DENY
+          read-summary: EFFECT_DENY
 
   - name: Platform administrators, clinicians, and unauthenticated users cannot request or read summaries
     input:
       principals: [platform_admin, clinician, unauthenticated]
       resources: [ed_grant]
-      actions: [request, read-hospital-summary, read-allergies]
+      actions: [request, read-summary]
     expected:
       - principal: platform_admin
         resource: ed_grant
         actions:
           request: EFFECT_DENY
-          read-hospital-summary: EFFECT_DENY
-          read-allergies: EFFECT_DENY
+          read-summary: EFFECT_DENY
       - principal: clinician
         resource: ed_grant
         actions:
           request: EFFECT_DENY
-          read-hospital-summary: EFFECT_DENY
-          read-allergies: EFFECT_DENY
+          read-summary: EFFECT_DENY
       - principal: unauthenticated
         resource: ed_grant
         actions:
           request: EFFECT_DENY
-          read-hospital-summary: EFFECT_DENY
-          read-allergies: EFFECT_DENY
+          read-summary: EFFECT_DENY
 
   - name: Only platform administrators without facility affiliation can change verification
     input:

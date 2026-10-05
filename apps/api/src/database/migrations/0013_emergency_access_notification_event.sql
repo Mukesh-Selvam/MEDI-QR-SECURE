@@ -1,0 +1,1 @@
+ALTER TYPE "public"."notification_event_type" ADD VALUE 'EMERGENCY_ACCESS_GRANTED';

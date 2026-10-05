@@ -52,7 +52,7 @@ export const facilityTypeEnum = pgEnum("facility_type", [
 
 export const facilityVerificationStatusEnum = pgEnum(
   "facility_verification_status",
-  ["pending", "verified", "rejected", "suspended", "revoked"]
+  ["pending", "verified", "rejected", "suspended", "revoked"],
 );
 
 export const facilityStaffStatusEnum = pgEnum("facility_staff_status", [
@@ -76,16 +76,16 @@ export const emergencyRequestStatusEnum = pgEnum("emergency_request_status", [
   "expired",
 ]);
 
-export const emergencyReviewOutcomeEnum = pgEnum(
-  "emergency_review_outcome",
-  ["appropriate", "inappropriate", "referred"]
-);
-
-export const guardianshipRelationshipEnum = pgEnum("guardianship_relationship", [
-  "mother",
-  "father",
-  "legal_guardian",
+export const emergencyReviewOutcomeEnum = pgEnum("emergency_review_outcome", [
+  "appropriate",
+  "inappropriate",
+  "referred",
 ]);
+
+export const guardianshipRelationshipEnum = pgEnum(
+  "guardianship_relationship",
+  ["mother", "father", "legal_guardian"],
+);
 
 export const verificationStatusEnum = pgEnum("verification_status", [
   "pending",
@@ -173,13 +173,17 @@ export const users = pgTable(
     role: userRoleEnum("role").notNull().default("patient"),
     status: userStatusEnum("status").notNull().default("active"),
     facilityId: uuid("facility_id"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     uniqueIndex("users_keycloak_id_idx").on(table.keycloakId),
     index("users_role_idx").on(table.role),
-  ]
+  ],
 );
 
 export const facilities = pgTable(
@@ -188,7 +192,9 @@ export const facilities = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     facilityType: facilityTypeEnum("facility_type").notNull(),
     displayName: varchar("display_name", { length: 255 }).notNull(),
-    registrationNumber: varchar("registration_number", { length: 128 }).notNull(),
+    registrationNumber: varchar("registration_number", {
+      length: 128,
+    }).notNull(),
     registrationJurisdiction: varchar("registration_jurisdiction", {
       length: 128,
     }).notNull(),
@@ -209,10 +215,10 @@ export const facilities = pgTable(
   (table) => [
     uniqueIndex("facilities_registration_idx").on(
       table.registrationJurisdiction,
-      table.registrationNumber
+      table.registrationNumber,
     ),
     index("facilities_verification_status_idx").on(table.verificationStatus),
-  ]
+  ],
 );
 
 export const facilityStaffAffiliations = pgTable(
@@ -241,17 +247,17 @@ export const facilityStaffAffiliations = pgTable(
   (table) => [
     uniqueIndex("facility_staff_affiliations_facility_user_idx").on(
       table.facilityId,
-      table.userId
+      table.userId,
     ),
     index("facility_staff_affiliations_user_status_idx").on(
       table.userId,
-      table.status
+      table.status,
     ),
     check(
       "facility_staff_affiliations_role_check",
-      sql`${table.role}::text in ('emergency-department-staff', 'pharmacy-staff', 'facility-admin')`
+      sql`${table.role}::text in ('emergency-department-staff', 'pharmacy-staff', 'facility-admin')`,
     ),
-  ]
+  ],
 );
 
 export const emergencyAccessRequests = pgTable(
@@ -284,24 +290,24 @@ export const emergencyAccessRequests = pgTable(
   (table) => [
     index("emergency_access_requests_patient_created_idx").on(
       table.patientId,
-      table.createdAt
+      table.createdAt,
     ),
     index("emergency_access_requests_provider_created_idx").on(
       table.requesterUserId,
-      table.createdAt
+      table.createdAt,
     ),
     index("emergency_access_requests_facility_created_idx").on(
       table.facilityId,
-      table.createdAt
+      table.createdAt,
     ),
     index("emergency_access_requests_expiry_idx")
       .on(table.expiresAt)
       .where(sql`${table.status} = 'granted'`),
     check(
       "emergency_access_requests_fixed_ttl_check",
-      sql`${table.status} <> 'granted' or (${table.grantedAt} is not null and ${table.expiresAt} = ${table.grantedAt} + interval '30 minutes')`
+      sql`${table.status} <> 'granted' or (${table.grantedAt} is not null and ${table.expiresAt} = ${table.grantedAt} + interval '30 minutes')`,
     ),
-  ]
+  ],
 );
 
 export const emergencyAccessReviews = pgTable(
@@ -326,18 +332,18 @@ export const emergencyAccessReviews = pgTable(
   (table) => [
     index("emergency_access_reviews_due_idx").on(
       table.reviewDueAt,
-      table.reviewedAt
+      table.reviewedAt,
     ),
     index("emergency_access_reviews_reviewer_idx").on(table.reviewerUserId),
     check(
       "emergency_access_reviews_decision_state_check",
-      sql`(${table.reviewerUserId} is null and ${table.outcome} is null and ${table.reviewedAt} is null) or (${table.reviewerUserId} is not null and ${table.outcome} is not null and ${table.reviewedAt} is not null)`
+      sql`(${table.reviewerUserId} is null and ${table.outcome} is null and ${table.reviewedAt} is null) or (${table.reviewerUserId} is not null and ${table.outcome} is not null and ${table.reviewedAt} is not null)`,
     ),
     check(
       "emergency_access_reviews_escalation_state_check",
-      sql`(${table.escalatedToUserId} is null and ${table.escalatedAt} is null) or (${table.escalatedToUserId} is not null and ${table.escalatedAt} is not null and ${table.escalatedToUserId} is distinct from ${table.reviewerUserId})`
+      sql`(${table.escalatedToUserId} is null and ${table.escalatedAt} is null) or (${table.escalatedToUserId} is not null and ${table.escalatedAt} is not null and ${table.escalatedToUserId} is distinct from ${table.reviewerUserId})`,
     ),
-  ]
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -357,14 +363,18 @@ export const patients = pgTable(
     bloodGroup: varchar("blood_group", { length: 10 }),
     phoneHash: varchar("phone_hash", { length: 64 }).notNull(), // blind index
     encryptedPhone: text("encrypted_phone").notNull(), // AES-256-GCM
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     uniqueIndex("patients_health_id_idx").on(table.healthId),
     index("patients_phone_hash_idx").on(table.phoneHash),
     index("patients_user_id_idx").on(table.userId),
-  ]
+  ],
 );
 
 export const emergencyProfiles = pgTable(
@@ -387,7 +397,7 @@ export const emergencyProfiles = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => [index("emergency_profiles_enabled_idx").on(table.enabled)]
+  (table) => [index("emergency_profiles_enabled_idx").on(table.enabled)],
 );
 
 // ---------------------------------------------------------------------------
@@ -404,19 +414,25 @@ export const clinicians = pgTable(
     registrationNumber: varchar("registration_number", { length: 100 })
       .notNull()
       .unique(),
-    stateMedicalCouncil: varchar("state_medical_council", { length: 100 }).notNull(),
+    stateMedicalCouncil: varchar("state_medical_council", {
+      length: 100,
+    }).notNull(),
     qualification: varchar("qualification", { length: 100 }),
     specialization: varchar("specialization", { length: 100 }),
     isVerified: boolean("is_verified").notNull().default(false),
     verifiedAt: timestamp("verified_at", { withTimezone: true }),
     verifiedBy: uuid("verified_by").references(() => users.id),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     index("clinicians_user_id_idx").on(table.userId),
     index("clinicians_verified_idx").on(table.isVerified),
-  ]
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -438,12 +454,14 @@ export const guardianships = pgTable(
       .default("pending"),
     proofDocumentId: varchar("proof_document_id", { length: 255 }),
     validUntil: timestamp("valid_until", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     index("guardianships_guardian_idx").on(table.guardianPatientId),
     index("guardianships_ward_idx").on(table.wardPatientId),
-  ]
+  ],
 );
 
 export const patientFacilityRelationships = pgTable(
@@ -457,15 +475,17 @@ export const patientFacilityRelationships = pgTable(
     isActive: boolean("is_active").notNull().default(true),
     validUntil: timestamp("valid_until", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     uniqueIndex("patient_facility_relationship_pair_idx").on(
       table.patientId,
-      table.facilityId
+      table.facilityId,
     ),
     index("patient_facility_relationship_facility_idx").on(table.facilityId),
-  ]
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -480,18 +500,26 @@ export const sessions = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     accessTokenIdHash: varchar("access_token_id_hash", { length: 64 }),
     refreshTokenHash: varchar("refresh_token_hash", { length: 64 }).notNull(),
-    deviceInfo: varchar("device_info", { length: 255 }).default("Unknown Device"),
+    deviceInfo: varchar("device_info", { length: 255 }).default(
+      "Unknown Device",
+    ),
     ipAddress: varchar("ip_address", { length: 45 }).default("127.0.0.1"),
-    lastActiveAt: timestamp("last_active_at", { withTimezone: true }).notNull().defaultNow(),
+    lastActiveAt: timestamp("last_active_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     index("sessions_user_id_idx").on(table.userId),
-    uniqueIndex("sessions_access_token_id_hash_idx").on(table.accessTokenIdHash),
+    uniqueIndex("sessions_access_token_id_hash_idx").on(
+      table.accessTokenIdHash,
+    ),
     index("sessions_refresh_hash_idx").on(table.refreshTokenHash),
-  ]
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -501,7 +529,9 @@ export const auditEvents = pgTable(
   "audit_events",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    timestamp: timestamp("timestamp", { withTimezone: true }).notNull().defaultNow(),
+    timestamp: timestamp("timestamp", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     actorId: uuid("actor_id"),
     actorRole: varchar("actor_role", { length: 50 }),
     action: varchar("action", { length: 100 }).notNull(),
@@ -519,7 +549,7 @@ export const auditEvents = pgTable(
     index("audit_events_actor_idx").on(table.actorId),
     index("audit_events_action_idx").on(table.action),
     uniqueIndex("audit_events_event_index_idx").on(table.eventIndex),
-  ]
+  ],
 );
 
 // ===========================================================================
@@ -552,7 +582,9 @@ export const documents = pgTable(
     fileSizeBytes: integer("file_size_bytes").notNull(),
     /** Current lifecycle status */
     status: documentStatusEnum("status").notNull().default("quarantined"),
-    scanStatus: documentScanStatusEnum("scan_status").notNull().default("pending"),
+    scanStatus: documentScanStatusEnum("scan_status")
+      .notNull()
+      .default("pending"),
     scanCompletedAt: timestamp("scan_completed_at", { withTimezone: true }),
     scanThreatName: varchar("scan_threat_name", { length: 255 }),
     /** Clinical document date (e.g. date of lab test or prescription), not upload date */
@@ -562,8 +594,12 @@ export const documents = pgTable(
     emergencyVisible: boolean("emergency_visible").notNull().default(false),
     /** Notes stripped of PII — opaque references only */
     notes: text("notes"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (table) => [
@@ -576,9 +612,9 @@ export const documents = pgTable(
     index("documents_emergency_visible_idx")
       .on(table.patientId, table.documentDate)
       .where(
-        sql`${table.emergencyVisible} = true and ${table.documentType} = 'prescription' and ${table.status} = 'ready'`
+        sql`${table.emergencyVisible} = true and ${table.documentType} = 'prescription' and ${table.status} = 'ready'`,
       ),
-  ]
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -597,18 +633,22 @@ export const documentCryptoKeys = pgTable(
     /** KMS key alias / ARN / ID used for wrapping */
     kmsKeyId: varchar("kms_key_id", { length: 255 }).notNull(),
     /** Encryption algorithm used for the document payload */
-    algorithm: varchar("algorithm", { length: 32 }).notNull().default("aes-256-gcm"),
+    algorithm: varchar("algorithm", { length: 32 })
+      .notNull()
+      .default("aes-256-gcm"),
     /** Base64-encoded 12-byte GCM initialization vector */
     iv: varchar("iv", { length: 32 }).notNull(),
     /** Base64-encoded 16-byte GCM authentication tag */
     authTag: varchar("auth_tag", { length: 32 }).notNull(),
     /** Hex SHA-256 of plaintext document bytes — verified on every decryption */
     sha256Plaintext: varchar("sha256_plaintext", { length: 64 }).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     uniqueIndex("doc_crypto_keys_document_id_idx").on(table.documentId),
-  ]
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -630,11 +670,11 @@ export const documentVersions = pgTable(
       .references(() => users.id, { onDelete: "restrict" }),
     sha256Plaintext: varchar("sha256_plaintext", { length: 64 }).notNull(),
     fileSizeBytes: integer("file_size_bytes").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
-  (table) => [
-    index("doc_versions_document_id_idx").on(table.documentId),
-  ]
+  (table) => [index("doc_versions_document_id_idx").on(table.documentId)],
 );
 
 // ---------------------------------------------------------------------------
@@ -652,13 +692,17 @@ export const fhirDocumentReferences = pgTable(
     resource: jsonb("resource").notNull(),
     /** FHIR resource ID (separate from our internal document id) */
     fhirId: varchar("fhir_id", { length: 64 }).notNull().unique(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     uniqueIndex("fhir_doc_refs_document_id_idx").on(table.documentId),
     uniqueIndex("fhir_doc_refs_fhir_id_idx").on(table.fhirId),
-  ]
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -673,7 +717,9 @@ export const qrCredentials = pgTable(
       .references(() => patients.id, { onDelete: "cascade" }),
     tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
     status: qrCredentialStatusEnum("status").notNull().default("active"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     rotatedAt: timestamp("rotated_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
@@ -682,7 +728,7 @@ export const qrCredentials = pgTable(
     uniqueIndex("qr_credentials_one_active_per_patient_idx")
       .on(table.patientId)
       .where(sql`${table.status} = 'active'`),
-  ]
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -702,16 +748,23 @@ export const accessRequests = pgTable(
       .notNull()
       .references(() => qrCredentials.id, { onDelete: "restrict" }),
     purpose: accessPurposeEnum("purpose").notNull(),
-    scope: jsonb("scope").$type<(typeof accessScopeEnum.enumValues)[number][]>().notNull(),
+    scope: jsonb("scope")
+      .$type<(typeof accessScopeEnum.enumValues)[number][]>()
+      .notNull(),
     status: accessRequestStatusEnum("status").notNull().default("pending"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     decidedByUserId: uuid("decided_by_user_id").references(() => users.id),
   },
   (table) => [
-    index("access_requests_patient_status_idx").on(table.patientId, table.status),
+    index("access_requests_patient_status_idx").on(
+      table.patientId,
+      table.status,
+    ),
     index("access_requests_clinician_idx").on(table.clinicianUserId),
-  ]
+  ],
 );
 
 export const consentStatusEnum = pgEnum("consent_status", [
@@ -726,6 +779,7 @@ export const notificationEventTypeEnum = pgEnum("notification_event_type", [
   "ACCESS_DENIED",
   "DOCUMENT_READ",
   "ACCESS_REVOKED",
+  "EMERGENCY_ACCESS_GRANTED",
 ]);
 
 export const consents = pgTable(
@@ -742,18 +796,22 @@ export const consents = pgTable(
     granteeUserId: uuid("grantee_user_id")
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
-    scope: jsonb("scope").$type<(typeof accessScopeEnum.enumValues)[number][]>().notNull(),
+    scope: jsonb("scope")
+      .$type<(typeof accessScopeEnum.enumValues)[number][]>()
+      .notNull(),
     purpose: accessPurposeEnum("purpose").notNull(),
     status: consentStatusEnum("status").notNull().default("active"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     index("consents_patient_status_idx").on(table.patientId, table.status),
     index("consents_grantee_idx").on(table.granteeUserId),
     index("consents_expiry_idx").on(table.expiresAt),
-  ]
+  ],
 );
 
 export const notifications = pgTable(
@@ -773,13 +831,48 @@ export const notifications = pgTable(
   (table) => [
     index("notifications_recipient_created_idx").on(
       table.recipientUserId,
-      table.createdAt
+      table.createdAt,
     ),
     index("notifications_recipient_unread_idx").on(
       table.recipientUserId,
-      table.readAt
+      table.readAt,
     ),
-  ]
+  ],
+);
+
+export const notificationEmailOutbox = pgTable(
+  "notification_email_outbox",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    notificationId: uuid("notification_id")
+      .notNull()
+      .unique()
+      .references(() => notifications.id, { onDelete: "cascade" }),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    failedAt: timestamp("failed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("notification_email_outbox_due_idx").on(
+      table.nextAttemptAt,
+      table.lockedUntil,
+    ),
+    check(
+      "notification_email_outbox_attempts_check",
+      sql`${table.attempts} >= 0`,
+    ),
+    check(
+      "notification_email_outbox_terminal_state_check",
+      sql`not (${table.sentAt} is not null and ${table.failedAt} is not null)`,
+    ),
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -817,8 +910,7 @@ export type EmergencyAccessRequest =
   typeof emergencyAccessRequests.$inferSelect;
 export type NewEmergencyAccessRequest =
   typeof emergencyAccessRequests.$inferInsert;
-export type EmergencyAccessReview =
-  typeof emergencyAccessReviews.$inferSelect;
+export type EmergencyAccessReview = typeof emergencyAccessReviews.$inferSelect;
 export type NewEmergencyAccessReview =
   typeof emergencyAccessReviews.$inferInsert;
 
@@ -830,4 +922,5 @@ export type NewDocumentCryptoKey = typeof documentCryptoKeys.$inferInsert;
 export type DocumentVersion = typeof documentVersions.$inferSelect;
 export type NewDocumentVersion = typeof documentVersions.$inferInsert;
 export type FhirDocumentReference = typeof fhirDocumentReferences.$inferSelect;
-export type NewFhirDocumentReference = typeof fhirDocumentReferences.$inferInsert;
+export type NewFhirDocumentReference =
+  typeof fhirDocumentReferences.$inferInsert;

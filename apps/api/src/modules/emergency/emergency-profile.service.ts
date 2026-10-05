@@ -1,17 +1,21 @@
 import { ForbiddenException, Inject, Injectable } from "@nestjs/common";
-import { eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { db } from "../../database/index.js";
-import { emergencyProfiles, patients } from "../../database/schema.js";
+import {
+  emergencyAccessRequests,
+  emergencyProfiles,
+  patients,
+} from "../../database/schema.js";
 import type { AuthenticatedUser } from "../auth/decorators/current-user.decorator.js";
 import { isVerifiedGuardianOfPatient } from "../auth/patient-access.js";
 import { AuditService } from "../audit/audit.service.js";
 import {
   VaultCryptoService,
-  type EncryptResult
+  type EncryptResult,
 } from "../vault/crypto/vault-crypto.service.js";
 import {
   emergencyProfileSchema,
-  type EmergencyProfileInput
+  type EmergencyProfileInput,
 } from "./emergency-profile.schema.js";
 
 type ProfileCrypto = Pick<VaultCryptoService, "encrypt" | "decrypt">;
@@ -22,14 +26,14 @@ const EMERGENCY_PROFILE_UNAVAILABLE = "Emergency profile unavailable.";
 export class EmergencyProfileService {
   constructor(
     @Inject(VaultCryptoService) private readonly crypto: ProfileCrypto,
-    @Inject(AuditService) private readonly audit: ProfileAudit
+    @Inject(AuditService) private readonly audit: ProfileAudit,
   ) {}
 
   async read(
     patientId: string,
     actor: AuthenticatedUser,
     ip: string,
-    userAgent: string | undefined
+    userAgent: string | undefined,
   ): Promise<EmergencyProfileInput & { enabled: boolean }> {
     await this.assertCanManage(patientId, actor);
     return db.transaction(async (transaction) => {
@@ -44,7 +48,7 @@ export class EmergencyProfileService {
           bloodGroup: "",
           allergies: [],
           emergencyContacts: [],
-          enabled: false
+          enabled: false,
         };
       } else {
         const plaintext = await this.crypto.decrypt({
@@ -53,12 +57,12 @@ export class EmergencyProfileService {
           kmsKeyId: profile.kmsKeyId,
           iv: profile.iv,
           authTag: profile.authTag,
-          sha256Plaintext: profile.sha256Plaintext
+          sha256Plaintext: profile.sha256Plaintext,
         });
         try {
           const parsed = emergencyProfileSchema.safeParse({
             ...JSON.parse(plaintext.toString("utf8")),
-            enabled: profile.enabled
+            enabled: profile.enabled,
           });
           if (!parsed.success) {
             throw new Error("Stored emergency profile failed validation.");
@@ -78,9 +82,9 @@ export class EmergencyProfileService {
           resourceId: patientId,
           outcome: "SUCCESS",
           ipHash: this.audit.hashIp(ip),
-          userAgent
+          userAgent,
         },
-        transaction
+        transaction,
       );
       return result;
     });
@@ -91,7 +95,7 @@ export class EmergencyProfileService {
     actor: AuthenticatedUser,
     input: EmergencyProfileInput,
     ip: string,
-    userAgent: string | undefined
+    userAgent: string | undefined,
   ): Promise<{ patientId: string; enabled: boolean; updatedAt: Date }> {
     await this.assertCanManage(patientId, actor);
     const { enabled, ...declared } = input;
@@ -132,7 +136,7 @@ export class EmergencyProfileService {
           sha256Plaintext: encrypted.sha256Plaintext,
           enabled,
           updatedByUserId: actor.id,
-          updatedAt: now
+          updatedAt: now,
         })
         .onConflictDoUpdate({
           target: emergencyProfiles.patientId,
@@ -145,13 +149,13 @@ export class EmergencyProfileService {
             sha256Plaintext: encrypted.sha256Plaintext,
             enabled,
             updatedByUserId: actor.id,
-            updatedAt: now
-          }
+            updatedAt: now,
+          },
         })
         .returning({
           patientId: emergencyProfiles.patientId,
           enabled: emergencyProfiles.enabled,
-          updatedAt: emergencyProfiles.updatedAt
+          updatedAt: emergencyProfiles.updatedAt,
         });
       if (!profile)
         throw new Error("Emergency profile update returned no record.");
@@ -168,10 +172,38 @@ export class EmergencyProfileService {
             resourceId: patientId,
             outcome: "SUCCESS",
             ipHash: this.audit.hashIp(ip),
-            userAgent
+            userAgent,
           },
-          transaction
+          transaction,
         );
+      }
+      if (!enabled) {
+        const revokedRequests = await transaction
+          .update(emergencyAccessRequests)
+          .set({ status: "revoked", revokedAt: now })
+          .where(
+            and(
+              eq(emergencyAccessRequests.patientId, patientId),
+              eq(emergencyAccessRequests.status, "granted"),
+              gt(emergencyAccessRequests.expiresAt, now),
+            ),
+          )
+          .returning({ id: emergencyAccessRequests.id });
+        for (const request of revokedRequests) {
+          await this.audit.logInTransaction(
+            {
+              actorId: actor.id,
+              actorRole: actor.role,
+              action: "EMERGENCY_ACCESS_REVOKED_PROFILE_DISABLED",
+              resourceType: "emergency_access_request",
+              resourceId: request.id,
+              outcome: "SUCCESS",
+              ipHash: this.audit.hashIp(ip),
+              userAgent,
+            },
+            transaction,
+          );
+        }
       }
       await this.audit.logInTransaction(
         {
@@ -182,9 +214,9 @@ export class EmergencyProfileService {
           resourceId: patientId,
           outcome: "SUCCESS",
           ipHash: this.audit.hashIp(ip),
-          userAgent
+          userAgent,
         },
-        transaction
+        transaction,
       );
       return profile;
     });
@@ -192,7 +224,7 @@ export class EmergencyProfileService {
 
   private async assertCanManage(
     patientId: string,
-    actor: AuthenticatedUser
+    actor: AuthenticatedUser,
   ): Promise<void> {
     const [patient] = await db
       .select({ id: patients.id, userId: patients.userId })

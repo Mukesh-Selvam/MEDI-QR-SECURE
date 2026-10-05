@@ -27,6 +27,12 @@ const state = vi.hoisted(() => ({
 }));
 
 const tables = vi.hoisted(() => ({
+  emergencyAccessRequests: {
+    patientId: "patientId",
+    status: "status",
+    expiresAt: "expiresAt",
+    id: "id"
+  },
   emergencyProfiles: { patientId: "patientId", enabled: "enabled" },
   patients: { id: "id", userId: "userId" }
 }));
@@ -80,12 +86,20 @@ vi.mock("../../database/index.js", () => ({
               })
             };
           }
+        }),
+        update: () => ({
+          set: () => ({
+            where: () => ({
+              returning: async () => []
+            })
+          })
         })
       })
   }
 }));
 
 vi.mock("../../database/schema.js", () => ({
+  emergencyAccessRequests: tables.emergencyAccessRequests,
   emergencyProfiles: tables.emergencyProfiles,
   patients: tables.patients
 }));
