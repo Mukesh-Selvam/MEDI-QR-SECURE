@@ -10,17 +10,17 @@ const profileSchema = z.object({
     z.object({
       name: z.string(),
       relationship: z.string(),
-      phone: z.string(),
-    }),
+      phone: z.string()
+    })
   ),
-  enabled: z.boolean(),
+  enabled: z.boolean()
 });
 const userSchema = z.object({
   patientId: z.string().uuid().nullable(),
-  role: z.string(),
+  role: z.string()
 });
 const wardsSchema = z.object({
-  wards: z.array(z.object({ id: z.string().uuid(), label: z.string() })),
+  wards: z.array(z.object({ id: z.string().uuid(), label: z.string() }))
 });
 
 type Profile = z.infer<typeof profileSchema>;
@@ -29,7 +29,7 @@ const emptyProfile: Profile = {
   bloodGroup: "",
   allergies: [],
   emergencyContacts: [],
-  enabled: false,
+  enabled: false
 };
 
 function readCsrfCookie(): string {
@@ -46,6 +46,7 @@ export default function PatientEmergencyProfilePage() {
   const [patientChoices, setPatientChoices] = useState<
     Array<{ id: string; label: string }>
   >([]);
+  const [hasPatientProfile, setHasPatientProfile] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -53,11 +54,12 @@ export default function PatientEmergencyProfilePage() {
 
   const load = useCallback(async (requestedPatientId?: string) => {
     setLoading(true);
+    setHasPatientProfile(false);
     setError("");
     try {
       const [userResponse, inboxResponse] = await Promise.all([
         fetch("/api/v1/auth/me", { cache: "no-store" }),
-        fetch("/api/v1/access/requests/inbox", { cache: "no-store" }),
+        fetch("/api/v1/access/requests/inbox", { cache: "no-store" })
       ]);
       if (!userResponse.ok)
         throw new Error("Sign in to manage emergency details.");
@@ -69,7 +71,7 @@ export default function PatientEmergencyProfilePage() {
         ...(user.patientId
           ? [{ id: user.patientId, label: "My profile" }]
           : []),
-        ...inbox.wards,
+        ...inbox.wards
       ];
       const target =
         requestedPatientId &&
@@ -77,22 +79,27 @@ export default function PatientEmergencyProfilePage() {
           ? requestedPatientId
           : choices[0]?.id;
       setPatientChoices(choices);
-      if (!target)
-        throw new Error("No patient profile is available for this account.");
+      if (!target) {
+        setPatientId("");
+        throw new Error(
+          "No patient profile is available for this account. Contact support if you think this is a mistake."
+        );
+      }
       setPatientId(target);
       const response = await fetch(`/api/v1/emergency/profiles/${target}`, {
-        cache: "no-store",
+        cache: "no-store"
       });
       if (!response.ok)
         throw new Error("Emergency details could not be loaded.");
       const nextProfile = profileSchema.parse(await response.json());
       setProfile(nextProfile);
       setAllergyText(nextProfile.allergies.join("\n"));
+      setHasPatientProfile(true);
     } catch (loadError) {
       setError(
         loadError instanceof Error
           ? loadError.message
-          : "Emergency details could not be loaded.",
+          : "Emergency details could not be loaded."
       );
     } finally {
       setLoading(false);
@@ -117,16 +124,16 @@ export default function PatientEmergencyProfilePage() {
         method: "PUT",
         headers: {
           "content-type": "application/json",
-          "x-csrf-token": csrfToken,
+          "x-csrf-token": csrfToken
         },
         body: JSON.stringify({
           ...profile,
           allergies: allergyText
             .split("\n")
             .map((value) => value.trim())
-            .filter(Boolean),
+            .filter(Boolean)
         }),
-        cache: "no-store",
+        cache: "no-store"
       });
       if (!response.ok)
         throw new Error("Emergency details could not be saved.");
@@ -136,7 +143,7 @@ export default function PatientEmergencyProfilePage() {
       setError(
         saveError instanceof Error
           ? saveError.message
-          : "Emergency details could not be saved.",
+          : "Emergency details could not be saved."
       );
     } finally {
       setSaving(false);
@@ -146,14 +153,14 @@ export default function PatientEmergencyProfilePage() {
   function updateContact(
     index: number,
     field: "name" | "relationship" | "phone",
-    value: string,
+    value: string
   ) {
     setProfile((current) => {
       const contacts = [...current.emergencyContacts];
       const existing = contacts[index] ?? {
         name: "",
         relationship: "",
-        phone: "",
+        phone: ""
       };
       contacts[index] = { ...existing, [field]: value };
       return { ...current, emergencyContacts: contacts };
@@ -173,9 +180,15 @@ export default function PatientEmergencyProfilePage() {
     <main className="mx-auto w-full max-w-3xl px-4 py-10 text-[#2B2230]">
       <h1 className="font-serif text-3xl font-semibold">Emergency details</h1>
       <p className="mt-3 max-w-[65ch] leading-7">
-        These details are entered by you. They are shared only during an
-        approved emergency access request.
+        These details are entered by you and saved securely. Emergency access is
+        not available yet, so this setting does not share them with anyone.
       </p>
+
+      {!hasPatientProfile && error && (
+        <p role="alert" className="mt-6 text-[#9E3028]">
+          {error}
+        </p>
+      )}
 
       {patientChoices.length > 1 && (
         <label className="mt-6 block">
@@ -196,156 +209,166 @@ export default function PatientEmergencyProfilePage() {
         </label>
       )}
 
-      <form onSubmit={save} className="mt-8 space-y-6">
-        <label className="block">
-          <span className="mb-2 block font-medium">Blood group</span>
-          <select
-            value={profile.bloodGroup}
-            onChange={(event) =>
-              setProfile((current) => ({
-                ...current,
-                bloodGroup: event.target.value,
-              }))
-            }
-            className="min-h-11 w-full rounded-lg border border-[#8B7D88] bg-white px-3"
-          >
-            <option value="">Not provided</option>
-            {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "unknown"].map(
-              (group) => (
+      {hasPatientProfile && (
+        <form onSubmit={save} className="mt-8 space-y-6">
+          <label className="block">
+            <span className="mb-2 block font-medium">Blood group</span>
+            <select
+              value={profile.bloodGroup}
+              onChange={(event) =>
+                setProfile((current) => ({
+                  ...current,
+                  bloodGroup: event.target.value
+                }))
+              }
+              className="min-h-11 w-full rounded-lg border border-[#8B7D88] bg-white px-3"
+            >
+              <option value="">Not provided</option>
+              {[
+                "A+",
+                "A-",
+                "B+",
+                "B-",
+                "AB+",
+                "AB-",
+                "O+",
+                "O-",
+                "unknown"
+              ].map((group) => (
                 <option key={group} value={group}>
                   {group}
                 </option>
-              ),
-            )}
-          </select>
-        </label>
+              ))}
+            </select>
+          </label>
 
-        <label className="block">
-          <span className="mb-2 block font-medium">Allergies</span>
-          <span className="mb-2 block text-sm">
-            Enter one patient-declared item per line. Do not enter diagnoses.
-          </span>
-          <textarea
-            value={allergyText}
-            onChange={(event) => setAllergyText(event.target.value)}
-            rows={4}
-            className="w-full rounded-lg border border-[#8B7D88] bg-white p-3"
-          />
-        </label>
+          <label className="block">
+            <span className="mb-2 block font-medium">Allergies</span>
+            <span className="mb-2 block text-sm">
+              Enter one patient-declared item per line. Do not enter diagnoses.
+            </span>
+            <textarea
+              value={allergyText}
+              onChange={(event) => setAllergyText(event.target.value)}
+              rows={4}
+              className="w-full rounded-lg border border-[#8B7D88] bg-white p-3"
+            />
+          </label>
 
-        <fieldset className="space-y-4">
-          <legend className="font-medium">Emergency contacts</legend>
-          {profile.emergencyContacts.map((contact, index) => (
-            <div
-              key={index}
-              className="space-y-3 border-l-2 border-[#E8735A] pl-4"
-            >
-              <label className="block">
-                <span className="mb-2 block">Contact name</span>
-                <input
-                  value={contact.name}
-                  onChange={(event) =>
-                    updateContact(index, "name", event.target.value)
+          <fieldset className="space-y-4">
+            <legend className="font-medium">Emergency contacts</legend>
+            {profile.emergencyContacts.map((contact, index) => (
+              <div
+                key={index}
+                className="space-y-3 border-l-2 border-[#E8735A] pl-4"
+              >
+                <label className="block">
+                  <span className="mb-2 block">Contact name</span>
+                  <input
+                    value={contact.name}
+                    onChange={(event) =>
+                      updateContact(index, "name", event.target.value)
+                    }
+                    maxLength={120}
+                    className="min-h-11 w-full rounded-lg border border-[#8B7D88] bg-white px-3 dark:bg-[#322936]"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-2 block">Relationship</span>
+                  <input
+                    value={contact.relationship}
+                    onChange={(event) =>
+                      updateContact(index, "relationship", event.target.value)
+                    }
+                    maxLength={64}
+                    className="min-h-11 w-full rounded-lg border border-[#8B7D88] bg-white px-3 dark:bg-[#322936]"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-2 block">Contact phone</span>
+                  <input
+                    type="tel"
+                    value={contact.phone}
+                    onChange={(event) =>
+                      updateContact(index, "phone", event.target.value)
+                    }
+                    maxLength={32}
+                    className="min-h-11 w-full rounded-lg border border-[#8B7D88] bg-white px-3 dark:bg-[#322936]"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setProfile((current) => ({
+                      ...current,
+                      emergencyContacts: current.emergencyContacts.filter(
+                        (_contact, contactIndex) => contactIndex !== index
+                      )
+                    }))
                   }
-                  maxLength={120}
-                  className="min-h-11 w-full rounded-lg border border-[#8B7D88] bg-white px-3 dark:bg-[#322936]"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-2 block">Relationship</span>
-                <input
-                  value={contact.relationship}
-                  onChange={(event) =>
-                    updateContact(index, "relationship", event.target.value)
-                  }
-                  maxLength={64}
-                  className="min-h-11 w-full rounded-lg border border-[#8B7D88] bg-white px-3 dark:bg-[#322936]"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-2 block">Contact phone</span>
-                <input
-                  type="tel"
-                  value={contact.phone}
-                  onChange={(event) =>
-                    updateContact(index, "phone", event.target.value)
-                  }
-                  maxLength={32}
-                  className="min-h-11 w-full rounded-lg border border-[#8B7D88] bg-white px-3 dark:bg-[#322936]"
-                />
-              </label>
+                  className="min-h-11 px-3 font-semibold text-[#7B2930] underline underline-offset-4 dark:text-[#F2B9AC]"
+                >
+                  Remove contact
+                </button>
+              </div>
+            ))}
+            {profile.emergencyContacts.length < 5 && (
               <button
                 type="button"
                 onClick={() =>
                   setProfile((current) => ({
                     ...current,
-                    emergencyContacts: current.emergencyContacts.filter(
-                      (_contact, contactIndex) => contactIndex !== index,
-                    ),
+                    emergencyContacts: [
+                      ...current.emergencyContacts,
+                      { name: "", relationship: "", phone: "" }
+                    ]
                   }))
                 }
-                className="min-h-11 px-3 font-semibold text-[#7B2930] underline underline-offset-4 dark:text-[#F2B9AC]"
+                className="min-h-11 rounded-lg border border-[#8B7D88] px-4 font-semibold"
               >
-                Remove contact
+                Add an emergency contact
               </button>
-            </div>
-          ))}
-          {profile.emergencyContacts.length < 5 && (
-            <button
-              type="button"
-              onClick={() =>
+            )}
+          </fieldset>
+
+          <label className="flex min-h-11 items-start gap-3">
+            <input
+              type="checkbox"
+              checked={profile.enabled}
+              onChange={(event) =>
                 setProfile((current) => ({
                   ...current,
-                  emergencyContacts: [
-                    ...current.emergencyContacts,
-                    { name: "", relationship: "", phone: "" },
-                  ],
+                  enabled: event.target.checked
                 }))
               }
-              className="min-h-11 rounded-lg border border-[#8B7D88] px-4 font-semibold"
-            >
-              Add an emergency contact
-            </button>
+              className="mt-1 size-5 accent-[#4A1D3F]"
+            />
+            <span>
+              Allow emergency access to these details. Off by default. Emergency
+              access is not available yet; this records your preference and does
+              not grant access.
+            </span>
+          </label>
+
+          {error && (
+            <p role="alert" className="text-[#9E3028]">
+              {error}
+            </p>
           )}
-        </fieldset>
-
-        <label className="flex min-h-11 items-start gap-3">
-          <input
-            type="checkbox"
-            checked={profile.enabled}
-            onChange={(event) =>
-              setProfile((current) => ({
-                ...current,
-                enabled: event.target.checked,
-              }))
-            }
-            className="mt-1 size-5 accent-[#4A1D3F]"
-          />
-          <span>
-            Allow emergency access to these details. Off by default. Turning
-            this off blocks new emergency access and revokes any active
-            emergency grant.
-          </span>
-        </label>
-
-        {error && (
-          <p role="alert" className="text-[#9E3028]">
-            {error}
-          </p>
-        )}
-        {notice && (
-          <p role="status" className="text-[#275A43]">
-            {notice}
-          </p>
-        )}
-        <button
-          type="submit"
-          disabled={saving}
-          className="min-h-11 rounded-lg bg-[#4A1D3F] px-5 font-semibold text-white disabled:opacity-60"
-        >
-          {saving ? "Saving…" : "Save emergency details"}
-        </button>
-      </form>
+          {notice && (
+            <p role="status" className="text-[#275A43]">
+              {notice}
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={saving}
+            className="min-h-11 rounded-lg bg-[#4A1D3F] px-5 font-semibold text-white disabled:opacity-60"
+          >
+            {saving ? "Saving…" : "Save emergency details"}
+          </button>
+        </form>
+      )}
     </main>
   );
 }

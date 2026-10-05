@@ -9,23 +9,23 @@ import { PUBLIC_ROUTE_KEY } from "../decorators/public.decorator.js";
 const mocks = vi.hoisted(() => ({
   queryResults: [] as unknown[],
   checkResource: vi.fn(),
-  select: vi.fn(),
+  select: vi.fn()
 }));
 
 vi.mock("../../../database/index.js", () => ({
   db: {
-    select: mocks.select,
-  },
+    select: mocks.select
+  }
 }));
 
 vi.mock("../../../config/env.js", () => ({
-  env: { CERBOS_HOST: "127.0.0.1", CERBOS_PORT: 3593 },
+  env: { CERBOS_HOST: "127.0.0.1", CERBOS_PORT: 3593 }
 }));
 
 vi.mock("@cerbos/grpc", () => ({
   GRPC: vi.fn().mockImplementation(() => ({
-    checkResource: mocks.checkResource,
-  })),
+    checkResource: mocks.checkResource
+  }))
 }));
 
 function queryBuilder(result: unknown): object {
@@ -34,8 +34,10 @@ function queryBuilder(result: unknown): object {
     innerJoin: vi.fn(),
     where: vi.fn(),
     limit: vi.fn(),
-    then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
-      Promise.resolve(result).then(resolve, reject),
+    then: (
+      resolve: (value: unknown) => unknown,
+      reject: (reason: unknown) => unknown
+    ) => Promise.resolve(result).then(resolve, reject)
   };
   builder.from.mockReturnValue(builder);
   builder.innerJoin.mockReturnValue(builder);
@@ -61,14 +63,14 @@ function createContext(
   return {
     switchToHttp: () => ({ getRequest: () => request }),
     getHandler: () => ({}),
-    getClass: () => ({}),
+    getClass: () => ({})
   } as unknown as ExecutionContext;
 }
 
 const patientA: AuthenticatedUser = {
   id: "user-a",
   sub: "subject-a",
-  role: "patient",
+  role: "patient"
 };
 
 describe("PolicyGuard patient and guardian ownership resolution", () => {
@@ -78,37 +80,47 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.queryResults = [];
-    mocks.select.mockImplementation(() => queryBuilder(mocks.queryResults.shift()));
-    mocks.checkResource.mockImplementation(async (input: {
-      principal: {
-        id: string;
-        attributes: {
-          guardian_ward_ids: string[];
-          has_patient_relationship: boolean;
+    mocks.select.mockImplementation(() =>
+      queryBuilder(mocks.queryResults.shift())
+    );
+    mocks.checkResource.mockImplementation(
+      async (input: {
+        principal: {
+          id: string;
+          attributes: {
+            guardian_ward_ids: string[];
+            has_patient_relationship: boolean;
+          };
         };
-      };
-      resource: { attributes: { owner_id: string } };
-    }) => ({
-      isAllowed: () =>
-        input.principal.id === input.resource.attributes.owner_id ||
-        input.principal.attributes.guardian_ward_ids.includes(input.resource.attributes.owner_id) ||
-        input.principal.attributes.has_patient_relationship,
-    }));
+        resource: { attributes: { owner_id: string } };
+      }) => ({
+        isAllowed: () =>
+          input.principal.id === input.resource.attributes.owner_id ||
+          input.principal.attributes.guardian_ward_ids.includes(
+            input.resource.attributes.owner_id
+          ) ||
+          input.principal.attributes.has_patient_relationship
+      })
+    );
     reflector = new Reflector();
     guard = new PolicyGuard(reflector);
   });
 
   it("denies patient A access to patient B's timeline using the database owner", async () => {
     mocks.queryResults = [[{ id: "patient-b", userId: "user-b" }]];
-    const context = createContext(reflector, patientA, { patientId: "patient-b" });
+    const context = createContext(reflector, patientA, {
+      patientId: "patient-b"
+    });
 
-    await expect(guard.canActivate(context)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(guard.canActivate(context)).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
     expect(mocks.checkResource).toHaveBeenCalledWith(
       expect.objectContaining({
         principal: expect.objectContaining({ id: "user-a" }),
         resource: expect.objectContaining({
-          attributes: { owner_id: "user-b", patient_id: "patient-b" },
-        }),
+          attributes: { owner_id: "user-b", patient_id: "patient-b" }
+        })
       })
     );
   });
@@ -122,26 +134,100 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       expect.objectContaining({
         resource: expect.objectContaining({
           id: "patient-a",
-          attributes: { owner_id: "user-a", patient_id: "patient-a" },
-        }),
+          attributes: { owner_id: "user-a", patient_id: "patient-a" }
+        })
       })
     );
+  });
+
+  it("uses the same database owner lookup and Cerbos policy for emergency reads and updates", async () => {
+    const ownerUserId = "00000000-0000-4000-8000-000000000001";
+    const patientId = "00000000-0000-4000-8000-000000000002";
+    const owner: AuthenticatedUser = {
+      id: ownerUserId,
+      sub: ownerUserId,
+      role: "patient"
+    };
+
+    for (const action of ["read", "update"] as const) {
+      mocks.queryResults = [[{ id: patientId, userId: ownerUserId }]];
+      mocks.checkResource.mockResolvedValue({ isAllowed: () => true });
+      const context = createContext(
+        reflector,
+        owner,
+        { patientId },
+        "emergency-profile",
+        action
+      );
+
+      await expect(guard.canActivate(context)).resolves.toBe(true);
+      expect(mocks.checkResource).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          resource: expect.objectContaining({
+            id: patientId,
+            attributes: { owner_id: ownerUserId, patient_id: patientId }
+          }),
+          actions: [action]
+        })
+      );
+    }
+  });
+
+  it("does not distinguish a missing emergency-profile owner from a denied owner", async () => {
+    const deniedOwner: AuthenticatedUser = {
+      id: "00000000-0000-4000-8000-000000000003",
+      sub: "00000000-0000-4000-8000-000000000003",
+      role: "patient"
+    };
+    const context = createContext(
+      reflector,
+      deniedOwner,
+      { patientId: "00000000-0000-4000-8000-000000000004" },
+      "emergency-profile",
+      "read"
+    );
+    const getForbiddenMessage = async (
+      request: Promise<boolean>
+    ): Promise<string> => {
+      try {
+        await request;
+      } catch (error) {
+        if (error instanceof ForbiddenException) return error.message;
+        throw error;
+      }
+      throw new Error("Expected emergency-profile access to be denied.");
+    };
+
+    mocks.queryResults = [
+      [{ id: "00000000-0000-4000-8000-000000000004", userId: "owner-id" }]
+    ];
+    mocks.checkResource.mockResolvedValue({ isAllowed: () => false });
+    const deniedMessage = await getForbiddenMessage(guard.canActivate(context));
+
+    mocks.queryResults = [[]];
+    const missingMessage = await getForbiddenMessage(
+      guard.canActivate(context)
+    );
+
+    expect(missingMessage).toBe(deniedMessage);
   });
 
   it("denies patient A access to patient B's document", async () => {
     mocks.queryResults = [
       [{ patientId: "patient-b" }],
-      [{ id: "patient-b", userId: "user-b" }],
+      [{ id: "patient-b", userId: "user-b" }]
     ];
     const context = createContext(reflector, patientA, { id: "document-b" });
 
-    await expect(guard.canActivate(context)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(guard.canActivate(context)).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
     expect(mocks.checkResource).toHaveBeenCalledWith(
       expect.objectContaining({
         resource: expect.objectContaining({
           id: "document-b",
-          attributes: { owner_id: "user-b", patient_id: "patient-b" },
-        }),
+          attributes: { owner_id: "user-b", patient_id: "patient-b" }
+        })
       })
     );
   });
@@ -151,23 +237,23 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       id: "clinician-user",
       sub: "clinician-sub",
       role: "clinician",
-      isVerified: true,
+      isVerified: true
     };
     mocks.queryResults = [
-      [{
-        patientId: "patient-a",
-        scope: ["document:lab"],
-        purpose: "clinical-care",
-        expiresAt: new Date(Date.now() + 60_000),
-      }],
-      [{ id: "patient-a", userId: "patient-user-a" }],
+      [
+        {
+          patientId: "patient-a",
+          scope: ["document:lab"],
+          purpose: "clinical-care",
+          expiresAt: new Date(Date.now() + 60_000)
+        }
+      ],
+      [{ id: "patient-a", userId: "patient-user-a" }]
     ];
     mocks.checkResource.mockResolvedValue({ isAllowed: () => true });
-    const context = createContext(
-      reflector,
-      clinician,
-      { requestId: "request-a" }
-    );
+    const context = createContext(reflector, clinician, {
+      requestId: "request-a"
+    });
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(mocks.checkResource).toHaveBeenCalledWith(
@@ -176,15 +262,15 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
           id: "request-a",
           attributes: {
             owner_id: "patient-user-a",
-            patient_id: "patient-a",
-          },
+            patient_id: "patient-a"
+          }
         }),
         principal: expect.objectContaining({
           attributes: expect.objectContaining({
             has_consent_grant: true,
-            has_scope: true,
-          }),
-        }),
+            has_scope: true
+          })
+        })
       })
     );
   });
@@ -194,14 +280,12 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       id: "clinician-user",
       sub: "clinician-sub",
       role: "clinician",
-      isVerified: true,
+      isVerified: true
     };
     mocks.queryResults = [[]];
-    const context = createContext(
-      reflector,
-      clinician,
-      { requestId: "request-without-consent" }
-    );
+    const context = createContext(reflector, clinician, {
+      requestId: "request-without-consent"
+    });
 
     await expect(guard.canActivate(context)).rejects.toBeInstanceOf(
       ForbiddenException
@@ -213,24 +297,28 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
     const guardian: AuthenticatedUser = {
       id: "guardian-user",
       sub: "guardian-sub",
-      role: "guardian",
+      role: "guardian"
     };
     mocks.queryResults = [
       [{ patientId: "child-a" }],
       [{ id: "child-a", userId: "child-user-a" }],
-      [{ ownerUserId: "child-user-a" }],
+      [{ ownerUserId: "child-user-a" }]
     ];
-    const context = createContext(reflector, guardian, { id: "child-document" });
+    const context = createContext(reflector, guardian, {
+      id: "child-document"
+    });
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(mocks.checkResource).toHaveBeenCalledWith(
       expect.objectContaining({
         principal: expect.objectContaining({
-          attributes: expect.objectContaining({ guardian_ward_ids: ["child-user-a"] }),
+          attributes: expect.objectContaining({
+            guardian_ward_ids: ["child-user-a"]
+          })
         }),
         resource: expect.objectContaining({
-          attributes: { owner_id: "child-user-a", patient_id: "child-a" },
-        }),
+          attributes: { owner_id: "child-user-a", patient_id: "child-a" }
+        })
       })
     );
   });
@@ -239,26 +327,34 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
     const guardian: AuthenticatedUser = {
       id: "guardian-user",
       sub: "guardian-sub",
-      role: "guardian",
+      role: "guardian"
     };
     mocks.queryResults = [
       [{ patientId: "child-b" }],
       [{ id: "child-b", userId: "child-user-b" }],
-      [],
+      []
     ];
-    const context = createContext(reflector, guardian, { id: "child-b-document" });
+    const context = createContext(reflector, guardian, {
+      id: "child-b-document"
+    });
 
-    await expect(guard.canActivate(context)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(guard.canActivate(context)).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
   });
 
   it("never passes a client-controlled patient or document ID as owner_id", async () => {
     mocks.queryResults = [
       [{ patientId: "client-patient-id" }],
-      [{ id: "client-patient-id", userId: "database-owner-id" }],
+      [{ id: "client-patient-id", userId: "database-owner-id" }]
     ];
-    const context = createContext(reflector, patientA, { id: "client-document-id" });
+    const context = createContext(reflector, patientA, {
+      id: "client-document-id"
+    });
 
-    await expect(guard.canActivate(context)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(guard.canActivate(context)).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
     const request = mocks.checkResource.mock.calls[0]?.[0] as {
       resource: { attributes: { owner_id: string } };
     };
@@ -274,7 +370,9 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       {},
       "document",
       "create",
-      { "x-mediqr-patient-id": "patient-a" }
+      {
+        "x-mediqr-patient-id": "patient-a"
+      }
     );
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
@@ -282,8 +380,8 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       expect.objectContaining({
         resource: expect.objectContaining({
           id: "patient-a",
-          attributes: { owner_id: "user-a", patient_id: "patient-a" },
-        }),
+          attributes: { owner_id: "user-a", patient_id: "patient-a" }
+        })
       })
     );
   });
@@ -292,11 +390,11 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
     const guardian: AuthenticatedUser = {
       id: "guardian-user",
       sub: "guardian-sub",
-      role: "guardian",
+      role: "guardian"
     };
     mocks.queryResults = [
       [{ id: "child-a", userId: "child-user-a" }],
-      [{ ownerUserId: "child-user-a" }],
+      [{ ownerUserId: "child-user-a" }]
     ];
     const context = createContext(
       reflector,
@@ -311,11 +409,13 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
     expect(mocks.checkResource).toHaveBeenCalledWith(
       expect.objectContaining({
         principal: expect.objectContaining({
-          attributes: expect.objectContaining({ guardian_ward_ids: ["child-user-a"] }),
+          attributes: expect.objectContaining({
+            guardian_ward_ids: ["child-user-a"]
+          })
         }),
         resource: expect.objectContaining({
-          attributes: { owner_id: "child-user-a", patient_id: "child-a" },
-        }),
+          attributes: { owner_id: "child-user-a", patient_id: "child-a" }
+        })
       })
     );
   });
@@ -325,11 +425,11 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       id: "facility-user",
       sub: "facility-sub",
       role: "facility-admin",
-      facilityId: "facility-id",
+      facilityId: "facility-id"
     };
     mocks.queryResults = [
       [{ id: "patient-a", userId: "patient-user-a" }],
-      [{ id: "relationship-id" }],
+      [{ id: "relationship-id" }]
     ];
     const context = createContext(
       reflector,
@@ -337,18 +437,22 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       {},
       "document",
       "create",
-      { "x-mediqr-patient-id": "patient-a" }
+      {
+        "x-mediqr-patient-id": "patient-a"
+      }
     );
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(mocks.checkResource).toHaveBeenCalledWith(
       expect.objectContaining({
         principal: expect.objectContaining({
-          attributes: expect.objectContaining({ has_patient_relationship: true }),
+          attributes: expect.objectContaining({
+            has_patient_relationship: true
+          })
         }),
         resource: expect.objectContaining({
-          attributes: { owner_id: "patient-user-a", patient_id: "patient-a" },
-        }),
+          attributes: { owner_id: "patient-user-a", patient_id: "patient-a" }
+        })
       })
     );
   });
@@ -358,23 +462,17 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       id: "clinician-user",
       sub: "clinician-sub",
       role: "clinician",
-      isVerified: false,
+      isVerified: false
     };
     mocks.checkResource.mockResolvedValue({ isAllowed: () => true });
-    const context = createContext(
-      reflector,
-      clinician,
-      {},
-      "auth",
-      "read"
-    );
+    const context = createContext(reflector, clinician, {}, "auth", "read");
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(mocks.checkResource).toHaveBeenCalledWith(
       expect.objectContaining({
         principal: expect.objectContaining({ id: "clinician-user" }),
         resource: expect.objectContaining({ kind: "auth" }),
-        actions: ["read"],
+        actions: ["read"]
       })
     );
   });
@@ -384,7 +482,7 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       id: "clinician-user",
       sub: "clinician-sub",
       role: "clinician",
-      isVerified: true,
+      isVerified: true
     };
     const context = createContext(
       reflector,
@@ -405,7 +503,7 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       id: "clinician-user",
       sub: "clinician-sub",
       role: "clinician",
-      isVerified: true,
+      isVerified: true
     };
     mocks.checkResource.mockResolvedValue({ isAllowed: () => true });
     const context = createContext(
@@ -421,10 +519,10 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       expect.objectContaining({
         principal: expect.objectContaining({
           id: "clinician-user",
-          attributes: expect.objectContaining({ is_verified: true }),
+          attributes: expect.objectContaining({ is_verified: true })
         }),
         resource: expect.objectContaining({ kind: "access-request" }),
-        actions: ["create"],
+        actions: ["create"]
       })
     );
   });
@@ -434,7 +532,7 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       id: "clinician-user",
       sub: "clinician-sub",
       role: "clinician",
-      isVerified: false,
+      isVerified: false
     };
     const context = createContext(
       reflector,
@@ -454,7 +552,7 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
     mocks.checkResource.mockRejectedValue(new Error("PDP unavailable"));
     mocks.queryResults = [
       [{ patientId: "patient-a" }],
-      [{ id: "patient-a", userId: "user-a" }],
+      [{ id: "patient-a", userId: "user-a" }]
     ];
     const context = createContext(reflector, patientA, { id: "document-a" });
 
@@ -468,12 +566,12 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       id: "clinician-user",
       sub: "clinician-sub",
       role: "clinician",
-      isVerified: true,
+      isVerified: true
     };
     mocks.queryResults = [
       [{ patientId: "patient-a", documentType: "lab" }],
       [{ id: "patient-a", userId: "patient-owner" }],
-      [{ id: "consent-a" }],
+      [{ id: "consent-a" }]
     ];
     mocks.checkResource.mockResolvedValue({ isAllowed: () => true });
     const context = createContext(reflector, clinician, { id: "document-a" });
@@ -484,12 +582,12 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
         principal: expect.objectContaining({
           attributes: expect.objectContaining({
             has_consent_grant: true,
-            has_scope: true,
-          }),
+            has_scope: true
+          })
         }),
         resource: expect.objectContaining({
-          attributes: expect.objectContaining({ document_type: "lab" }),
-        }),
+          attributes: expect.objectContaining({ document_type: "lab" })
+        })
       })
     );
   });
@@ -499,12 +597,12 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
       id: "clinician-user",
       sub: "clinician-sub",
       role: "clinician",
-      isVerified: true,
+      isVerified: true
     };
     mocks.queryResults = [
       [{ patientId: "patient-a", documentType: "lab" }],
       [{ id: "patient-a", userId: "patient-owner" }],
-      [],
+      []
     ];
     const context = createContext(reflector, clinician, { id: "document-a" });
 

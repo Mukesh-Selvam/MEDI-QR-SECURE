@@ -2,7 +2,7 @@ import fastifyCookie from "@fastify/cookie";
 import { NestFactory } from "@nestjs/core";
 import {
   FastifyAdapter,
-  type NestFastifyApplication,
+  type NestFastifyApplication
 } from "@nestjs/platform-fastify";
 import { and, eq, gte } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -10,7 +10,12 @@ import { randomInt } from "crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { env } from "../../../config/env.js";
 import { db, pool } from "../../../database/index.js";
-import { auditEvents, sessions, users } from "../../../database/schema.js";
+import {
+  auditEvents,
+  patients,
+  sessions,
+  users
+} from "../../../database/schema.js";
 import { AuditService } from "../../audit/audit.service.js";
 import { AuthModule } from "../auth.module.js";
 
@@ -33,6 +38,7 @@ describe("Patient OTP login (integration)", () => {
   let testPhone!: string;
   let testIp!: string;
   let userId: string | undefined;
+  let patientId: string | undefined;
   let auditIpHash!: string;
   let startedAt!: Date;
 
@@ -51,7 +57,7 @@ describe("Patient OTP login (integration)", () => {
         "patient_facility_relationships",
         "patient_id",
         "sessions",
-        "access_token_id_hash",
+        "access_token_id_hash"
       ]
     );
     expect(
@@ -60,11 +66,13 @@ describe("Patient OTP login (integration)", () => {
       expect.arrayContaining([
         "users.facility_id",
         "patient_facility_relationships.patient_id",
-        "sessions.access_token_id_hash",
+        "sessions.access_token_id_hash"
       ])
     );
 
-    await waitForService(`${env.KEYCLOAK_BASE_URL}/realms/${encodeURIComponent(env.KEYCLOAK_REALM)}/.well-known/openid-configuration`);
+    await waitForService(
+      `${env.KEYCLOAK_BASE_URL}/realms/${encodeURIComponent(env.KEYCLOAK_REALM)}/.well-known/openid-configuration`
+    );
     await waitForService("http://127.0.0.1:8025/api/v1/messages?limit=1");
 
     app = await NestFactory.create<NestFastifyApplication>(
@@ -94,12 +102,12 @@ describe("Patient OTP login (integration)", () => {
     await pool.end();
   });
 
-  it("sends and verifies OTP, creates a session, sets cookies, and writes audit events", async () => {
+  it("creates and reuses a patient profile on OTP login and writes opaque audit IDs", async () => {
     const sendResponse = await fastify.inject({
       method: "POST",
       url: "/api/v1/auth/otp/send",
       payload: { phone: testPhone },
-      remoteAddress: testIp,
+      remoteAddress: testIp
     });
     expect(sendResponse.statusCode).toBe(200);
 
@@ -108,7 +116,7 @@ describe("Patient OTP login (integration)", () => {
       method: "POST",
       url: "/api/v1/auth/otp/verify",
       payload: { phone: testPhone, otp },
-      remoteAddress: testIp,
+      remoteAddress: testIp
     });
     expect(verifyResponse.statusCode).toBe(200);
 
@@ -121,7 +129,7 @@ describe("Patient OTP login (integration)", () => {
       expect.arrayContaining([
         "__Host-mediqr-access",
         "__Host-mediqr-refresh",
-        "__Host-mediqr-csrf",
+        "__Host-mediqr-csrf"
       ])
     );
     expect(cookieHeaders).toHaveLength(3);
@@ -134,9 +142,15 @@ describe("Patient OTP login (integration)", () => {
       expect(/;\s*SameSite=Strict/i.test(cookie)).toBe(true);
       expect(/;\s*Path=\/(?:;|$)/i.test(cookie)).toBe(true);
     }
-    expect(/;\s*HttpOnly/i.test(cookiesByName.get("__Host-mediqr-access") ?? "")).toBe(true);
-    expect(/;\s*HttpOnly/i.test(cookiesByName.get("__Host-mediqr-refresh") ?? "")).toBe(true);
-    expect(/;\s*HttpOnly/i.test(cookiesByName.get("__Host-mediqr-csrf") ?? "")).toBe(false);
+    expect(
+      /;\s*HttpOnly/i.test(cookiesByName.get("__Host-mediqr-access") ?? "")
+    ).toBe(true);
+    expect(
+      /;\s*HttpOnly/i.test(cookiesByName.get("__Host-mediqr-refresh") ?? "")
+    ).toBe(true);
+    expect(
+      /;\s*HttpOnly/i.test(cookiesByName.get("__Host-mediqr-csrf") ?? "")
+    ).toBe(false);
 
     const body = JSON.parse(verifyResponse.body) as { csrfToken?: unknown };
     expect(typeof body.csrfToken).toBe("string");
@@ -144,19 +158,52 @@ describe("Patient OTP login (integration)", () => {
     const authenticatedCookies = cookieHeaders
       .map((cookie) => cookie.split(";")[0])
       .join("; ");
+    const profileResponse = await fastify.inject({
+      method: "GET",
+      url: "/api/v1/auth/me",
+      headers: { cookie: authenticatedCookies }
+    });
+    expect(profileResponse.statusCode).toBe(200);
+    const profile = JSON.parse(profileResponse.body) as {
+      patientId: string | null;
+    };
+    expect(profile.patientId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    );
+    if (!profile.patientId) {
+      throw new Error("OTP verification did not provision a patient profile.");
+    }
+    patientId = profile.patientId;
+
     const user = await db.query.users.findFirst({
       columns: { id: true },
-      where: eq(users.phone, testPhone),
+      where: eq(users.phone, testPhone)
     });
     expect(user).toBeDefined();
     userId = user?.id;
     if (!userId) throw new Error("OTP verification did not provision a user.");
+    const patient = await db.query.patients.findFirst({
+      columns: {
+        id: true,
+        healthId: true,
+        phoneHash: true,
+        encryptedPhone: true
+      },
+      where: eq(patients.userId, userId)
+    });
+    expect(patient?.id).toBe(patientId);
+    expect(patient?.healthId).toMatch(/^MEDIQR-[0-9a-f-]{36}$/i);
+    expect(patient?.phoneHash).toMatch(/^[0-9a-f]{64}$/i);
+    expect(patient?.encryptedPhone).not.toContain(testPhone);
+    expect(JSON.parse(patient?.encryptedPhone ?? "{}")).toMatchObject({
+      version: 1
+    });
 
     const activeSessions = await db
       .select({
         id: sessions.id,
         lastActiveAt: sessions.lastActiveAt,
-        accessTokenIdHash: sessions.accessTokenIdHash,
+        accessTokenIdHash: sessions.accessTokenIdHash
       })
       .from(sessions)
       .where(eq(sessions.userId, userId));
@@ -167,7 +214,11 @@ describe("Patient OTP login (integration)", () => {
     );
 
     const verifyAudits = await db
-      .select({ id: auditEvents.id })
+      .select({
+        id: auditEvents.id,
+        actorId: auditEvents.actorId,
+        resourceId: auditEvents.resourceId
+      })
       .from(auditEvents)
       .where(
         and(
@@ -176,6 +227,13 @@ describe("Patient OTP login (integration)", () => {
         )
       );
     expect(verifyAudits).toHaveLength(1);
+    for (const audit of verifyAudits) {
+      expect(audit.actorId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      );
+      expect(audit.resourceId).toBe(userId);
+      expect(audit.resourceId).not.toContain(testPhone);
+    }
 
     const sendAudits = await db
       .select({ id: auditEvents.id })
@@ -189,8 +247,48 @@ describe("Patient OTP login (integration)", () => {
       );
     expect(sendAudits.length).toBeGreaterThan(0);
 
+    const secondSendResponse = await fastify.inject({
+      method: "POST",
+      url: "/api/v1/auth/otp/send",
+      payload: { phone: testPhone },
+      remoteAddress: testIp
+    });
+    expect(secondSendResponse.statusCode).toBe(200);
+    const secondOtp = await readOtpFromMailpit(testPhone, otp);
+    const secondVerifyResponse = await fastify.inject({
+      method: "POST",
+      url: "/api/v1/auth/otp/verify",
+      payload: { phone: testPhone, otp: secondOtp },
+      remoteAddress: testIp
+    });
+    expect(secondVerifyResponse.statusCode).toBe(200);
+    const secondCookiesHeader = secondVerifyResponse.headers["set-cookie"];
+    const secondCookieHeaders = Array.isArray(secondCookiesHeader)
+      ? secondCookiesHeader
+      : [secondCookiesHeader ?? ""];
+    const secondCookies = secondCookieHeaders
+      .map((cookie) => cookie.split(";")[0])
+      .join("; ");
+    const secondProfileResponse = await fastify.inject({
+      method: "GET",
+      url: "/api/v1/auth/me",
+      headers: { cookie: secondCookies }
+    });
+    expect(secondProfileResponse.statusCode).toBe(200);
+    expect(
+      (JSON.parse(secondProfileResponse.body) as { patientId: string | null })
+        .patientId
+    ).toBe(patientId);
+    expect(
+      await db
+        .select({ id: patients.id })
+        .from(patients)
+        .where(eq(patients.userId, userId))
+    ).toHaveLength(1);
+
     const sessionId = activeSessions[0]?.id;
-    if (!sessionId) throw new Error("OTP verification did not persist a session.");
+    if (!sessionId)
+      throw new Error("OTP verification did not persist a session.");
     await db
       .update(sessions)
       .set({ revokedAt: new Date() })
@@ -198,7 +296,7 @@ describe("Patient OTP login (integration)", () => {
     const revokedRequest = await fastify.inject({
       method: "GET",
       url: "/api/v1/auth/me",
-      headers: { cookie: authenticatedCookies },
+      headers: { cookie: authenticatedCookies }
     });
     expect(revokedRequest.statusCode).toBe(401);
   }, 90000);
@@ -218,23 +316,26 @@ async function waitForService(url: string): Promise<void> {
   throw new Error("A required integration service did not become ready.");
 }
 
-async function readOtpFromMailpit(phone: string): Promise<string> {
+async function readOtpFromMailpit(
+  phone: string,
+  previousOtp?: string
+): Promise<string> {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const listResponse = await fetch(
       "http://127.0.0.1:8025/api/v1/messages?limit=50"
     );
     const list = (await listResponse.json()) as MailpitMessageList;
-    const matchingMessage = list.messages.find((message) =>
+    const matchingMessages = list.messages.filter((message) =>
       message.Subject.includes(phone)
     );
 
-    if (matchingMessage) {
+    for (const matchingMessage of matchingMessages) {
       const detailResponse = await fetch(
         `http://127.0.0.1:8025/api/v1/message/${encodeURIComponent(matchingMessage.ID)}`
       );
       const detail = (await detailResponse.json()) as MailpitMessage;
       const otp = /one-time password is:\s*(\d{6})/.exec(detail.Text)?.[1];
-      if (otp) return otp;
+      if (otp && otp !== previousOtp) return otp;
     }
 
     await new Promise((resolve) => setTimeout(resolve, 250));

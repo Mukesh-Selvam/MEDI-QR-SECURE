@@ -17,14 +17,22 @@ import {
   Injectable,
   Logger,
   OnModuleDestroy,
-  UnauthorizedException,
+  UnauthorizedException
 } from "@nestjs/common";
-import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from "crypto";
+import {
+  createCipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+  randomInt,
+  randomUUID,
+  timingSafeEqual
+} from "crypto";
 import type { FastifyReply } from "fastify";
 import type { Redis } from "ioredis";
 import { createRedisClient } from "../../config/redis.config.js";
 import { db } from "../../database/index.js";
-import { users, sessions } from "../../database/schema.js";
+import { patients, sessions, users } from "../../database/schema.js";
 import { eq, and, isNull, gt } from "drizzle-orm";
 import type { SmsProvider } from "./providers/sms-provider.interface.js";
 import { SMS_PROVIDER } from "./providers/sms-provider.interface.js";
@@ -45,13 +53,53 @@ const otpSendKey = (phone: string) => `otp:send:${sha256(phone)}`;
 const otpIpKey = (ip: string) => `otp:ip:${ip}`;
 
 // Escalating lockout keys:
-const otpLockoutPhoneKey = (phone: string) => `otp:lockout:phone:${sha256(phone)}`;
+const otpLockoutPhoneKey = (phone: string) =>
+  `otp:lockout:phone:${sha256(phone)}`;
 const otpLockoutIpKey = (ipHash: string) => `otp:lockout:ip:${ipHash}`;
-const otpViolationsPhoneKey = (phone: string) => `otp:violations:phone:${sha256(phone)}`;
+const otpViolationsPhoneKey = (phone: string) =>
+  `otp:violations:phone:${sha256(phone)}`;
 const otpViolationsIpKey = (ipHash: string) => `otp:violations:ip:${ipHash}`;
 
 function sha256(val: string): string {
   return createHash("sha256").update(val).digest("hex");
+}
+
+function hashPatientPhone(phone: string): string {
+  const blindIndexKey = createHmac(
+    "sha256",
+    Buffer.from(env.MASTER_ENCRYPTION_KEY, "hex")
+  )
+    .update("mediqr:patient-phone-blind-index-key:v1")
+    .digest();
+  try {
+    return createHmac("sha256", blindIndexKey).update(phone).digest("hex");
+  } finally {
+    blindIndexKey.fill(0);
+  }
+}
+
+function encryptPatientPhone(phone: string): string {
+  const iv = randomBytes(12);
+  const plaintext = Buffer.from(phone, "utf8");
+  try {
+    const cipher = createCipheriv(
+      "aes-256-gcm",
+      Buffer.from(env.MASTER_ENCRYPTION_KEY, "hex"),
+      iv
+    );
+    const ciphertext = Buffer.concat([
+      cipher.update(plaintext),
+      cipher.final()
+    ]);
+    return JSON.stringify({
+      version: 1,
+      iv: iv.toString("base64"),
+      authTag: cipher.getAuthTag().toString("base64"),
+      ciphertext: ciphertext.toString("base64")
+    });
+  } finally {
+    plaintext.fill(0);
+  }
 }
 
 function hmacOtp(otp: string): string {
@@ -81,9 +129,18 @@ export class AuthService implements OnModuleDestroy {
   // ---------------------------------------------------------------------------
   // Escalating Lockout Helpers
   // ---------------------------------------------------------------------------
-  private async applyEscalatingLockout(type: "phone" | "ip", identifier: string): Promise<number> {
-    const violationKey = type === "phone" ? otpViolationsPhoneKey(identifier) : otpViolationsIpKey(identifier);
-    const lockoutKey = type === "phone" ? otpLockoutPhoneKey(identifier) : otpLockoutIpKey(identifier);
+  private async applyEscalatingLockout(
+    type: "phone" | "ip",
+    identifier: string
+  ): Promise<number> {
+    const violationKey =
+      type === "phone"
+        ? otpViolationsPhoneKey(identifier)
+        : otpViolationsIpKey(identifier);
+    const lockoutKey =
+      type === "phone"
+        ? otpLockoutPhoneKey(identifier)
+        : otpLockoutIpKey(identifier);
 
     const violations = await this.redis.incr(violationKey);
     if (violations === 1) {
@@ -144,7 +201,7 @@ export class AuthService implements OnModuleDestroy {
         resourceType: "auth",
         resourceId: "otp",
         outcome: "DENIED",
-        ipHash,
+        ipHash
       });
       throw new HttpException(
         `Too many OTP requests from this IP. Temporarily locked for ${Math.ceil(lockSec / 60)} minutes.`,
@@ -162,7 +219,7 @@ export class AuthService implements OnModuleDestroy {
         resourceType: "auth",
         resourceId: "otp",
         outcome: "DENIED",
-        ipHash,
+        ipHash
       });
       throw new HttpException(
         `Too many OTP requests for this number. Temporarily locked for ${Math.ceil(lockSec / 60)} minutes.`,
@@ -189,7 +246,7 @@ export class AuthService implements OnModuleDestroy {
       resourceType: "auth",
       resourceId: "otp",
       outcome: "SUCCESS",
-      ipHash,
+      ipHash
     });
 
     // Identical response whether account existed or not
@@ -234,7 +291,10 @@ export class AuthService implements OnModuleDestroy {
     const providedHmac = hmacOtp(otp);
     const isMatch =
       providedHmac.length === storedHmac.length &&
-      timingSafeEqual(Buffer.from(providedHmac, "hex"), Buffer.from(storedHmac, "hex"));
+      timingSafeEqual(
+        Buffer.from(providedHmac, "hex"),
+        Buffer.from(storedHmac, "hex")
+      );
 
     if (!isMatch) {
       const newAttempts = await this.redis.incr(otpAttemptsKey(phone));
@@ -247,7 +307,7 @@ export class AuthService implements OnModuleDestroy {
         resourceType: "auth",
         resourceId: "otp",
         outcome: "FAILURE",
-        ipHash,
+        ipHash
       });
 
       if (newAttempts >= 5) {
@@ -261,7 +321,9 @@ export class AuthService implements OnModuleDestroy {
         );
       }
 
-      throw new BadRequestException(`Invalid OTP (${5 - newAttempts} attempts remaining)`);
+      throw new BadRequestException(
+        `Invalid OTP (${5 - newAttempts} attempts remaining)`
+      );
     }
 
     // 5. Single-use: delete OTP and attempts immediately after successful verification
@@ -269,26 +331,58 @@ export class AuthService implements OnModuleDestroy {
     await this.redis.del(otpAttemptsKey(phone));
 
     // 6. Provision or resolve patient record (identical response/timing invariant)
-    const existingUser = await db.query.users.findFirst({
-      where: eq(users.phone, phone),
-    });
+    const { resolvedUser, patientCreated } = await db.transaction(
+      async (transaction) => {
+        let [user] = await transaction
+          .select()
+          .from(users)
+          .where(eq(users.phone, phone))
+          .for("update")
+          .limit(1);
 
-    let resolvedUser = existingUser;
-    if (
-      resolvedUser &&
-      resolvedUser.role !== "patient" &&
-      resolvedUser.role !== "guardian"
-    ) {
-      throw new UnauthorizedException("Staff must authenticate through OIDC");
-    }
-    if (!resolvedUser) {
-      const [newUser] = await db
-        .insert(users)
-        .values({ phone, role: "patient", status: "active" })
-        .returning();
-      resolvedUser = newUser;
-      this.logger.log("New patient provisioned.");
-    }
+        if (!user) {
+          [user] = await transaction
+            .insert(users)
+            .values({ phone, role: "patient", status: "active" })
+            .onConflictDoNothing({ target: users.phone })
+            .returning();
+        }
+        if (!user) {
+          [user] = await transaction
+            .select()
+            .from(users)
+            .where(eq(users.phone, phone))
+            .for("update")
+            .limit(1);
+        }
+        if (!user) throw new Error("OTP user provisioning failed.");
+        if (user.role !== "patient" && user.role !== "guardian") {
+          throw new UnauthorizedException(
+            "Staff must authenticate through OIDC"
+          );
+        }
+
+        const [patient] = await transaction
+          .select({ id: patients.id })
+          .from(patients)
+          .where(eq(patients.userId, user.id))
+          .for("update")
+          .limit(1);
+
+        if (!patient) {
+          await transaction.insert(patients).values({
+            userId: user.id,
+            healthId: `MEDIQR-${randomUUID()}`,
+            fullName: "Not provided",
+            phoneHash: hashPatientPhone(phone),
+            encryptedPhone: encryptPatientPhone(phone)
+          });
+        }
+
+        return { resolvedUser: user, patientCreated: !patient };
+      }
+    );
+    if (patientCreated) this.logger.log("Patient profile provisioned.");
 
     // 7. Issue refresh token + session
     const refreshTokenRaw = randomBytes(64).toString("hex");
@@ -296,21 +390,24 @@ export class AuthService implements OnModuleDestroy {
     const accessTokenId = randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000); // 8 hours
 
-    const [session] = await db.insert(sessions).values({
-      userId: resolvedUser.id,
-      accessTokenIdHash: sha256(accessTokenId),
-      refreshTokenHash,
-      deviceInfo: userAgent.slice(0, 255),
-      ipAddress: "hashed",
-      expiresAt,
-    }).returning({ id: sessions.id });
+    const [session] = await db
+      .insert(sessions)
+      .values({
+        userId: resolvedUser.id,
+        accessTokenIdHash: sha256(accessTokenId),
+        refreshTokenHash,
+        deviceInfo: userAgent.slice(0, 255),
+        ipAddress: "hashed",
+        expiresAt
+      })
+      .returning({ id: sessions.id });
     if (!session) throw new Error("Failed to create patient session.");
 
     // 8. Mint short-lived access JWT (5 minutes)
     const accessToken = await new SignJWT({
       mediqr_user_id: resolvedUser.id,
       role: resolvedUser.role,
-      facility_id: resolvedUser.facilityId,
+      facility_id: resolvedUser.facilityId
     })
       .setProtectedHeader({ alg: "HS256" })
       .setSubject(resolvedUser.id)
@@ -332,7 +429,7 @@ export class AuthService implements OnModuleDestroy {
       resourceId: resolvedUser.id,
       outcome: "SUCCESS",
       ipHash,
-      userAgent: userAgent.slice(0, 255),
+      userAgent: userAgent.slice(0, 255)
     });
 
     return { message: "Authentication successful", csrfToken };
@@ -380,7 +477,12 @@ export class AuthService implements OnModuleDestroy {
         await db
           .update(sessions)
           .set({ revokedAt: now })
-          .where(and(eq(sessions.userId, revokedSession.userId), isNull(sessions.revokedAt)));
+          .where(
+            and(
+              eq(sessions.userId, revokedSession.userId),
+              isNull(sessions.revokedAt)
+            )
+          );
 
         this.clearCookies(reply);
 
@@ -390,10 +492,12 @@ export class AuthService implements OnModuleDestroy {
           resourceType: "session",
           resourceId: revokedSession.id,
           outcome: "DENIED",
-          ipHash,
+          ipHash
         });
 
-        throw new UnauthorizedException("Session family revoked due to token reuse detection");
+        throw new UnauthorizedException(
+          "Session family revoked due to token reuse detection"
+        );
       }
 
       throw new UnauthorizedException("Invalid or expired refresh token");
@@ -426,13 +530,13 @@ export class AuthService implements OnModuleDestroy {
       refreshTokenHash: newRefreshHash,
       deviceInfo: userAgent.slice(0, 255),
       ipAddress: "hashed",
-      expiresAt,
+      expiresAt
     });
 
     const accessToken = await new SignJWT({
       mediqr_user_id: userRow.id,
       role: userRow.role,
-      facility_id: userRow.facilityId,
+      facility_id: userRow.facilityId
     })
       .setProtectedHeader({ alg: "HS256" })
       .setSubject(userRow.id)
@@ -453,7 +557,7 @@ export class AuthService implements OnModuleDestroy {
       resourceType: "session",
       resourceId: activeSession.id,
       outcome: "SUCCESS",
-      ipHash,
+      ipHash
     });
 
     return { message: "Token refreshed", csrfToken };
@@ -472,7 +576,9 @@ export class AuthService implements OnModuleDestroy {
       await db
         .update(sessions)
         .set({ revokedAt: new Date() })
-        .where(and(eq(sessions.id, user.sessionId), isNull(sessions.revokedAt)));
+        .where(
+          and(eq(sessions.id, user.sessionId), isNull(sessions.revokedAt))
+        );
     } else if (refreshTokenRaw) {
       const hash = sha256(refreshTokenRaw);
       await db
@@ -490,7 +596,7 @@ export class AuthService implements OnModuleDestroy {
       resourceType: "session",
       resourceId: "current",
       outcome: "SUCCESS",
-      ipHash,
+      ipHash
     });
 
     return { message: "Logged out" };
@@ -518,7 +624,7 @@ export class AuthService implements OnModuleDestroy {
       resourceType: "session",
       resourceId: user.id,
       outcome: "SUCCESS",
-      ipHash,
+      ipHash
     });
 
     return { message: "All sessions revoked" };
@@ -530,7 +636,7 @@ export class AuthService implements OnModuleDestroy {
     const patient = await db.query.patients.findFirst({
       columns: { id: true },
       where: (patientRecord, { eq: equals }) =>
-        equals(patientRecord.userId, user.id),
+        equals(patientRecord.userId, user.id)
     });
 
     return { ...user, patientId: patient?.id ?? null };
@@ -549,17 +655,17 @@ export class AuthService implements OnModuleDestroy {
       httpOnly: true,
       sameSite: "strict" as const,
       secure: true,
-      path: "/",
+      path: "/"
     };
 
     reply.setCookie(ACCESS_COOKIE, accessToken, {
       ...baseOpts,
-      maxAge: 300, // 5 minutes
+      maxAge: 300 // 5 minutes
     });
 
     reply.setCookie(REFRESH_COOKIE, refreshToken, {
       ...baseOpts,
-      maxAge: 28800, // 8 hours
+      maxAge: 28800 // 8 hours
     });
 
     // CSRF cookie: NOT httpOnly — JS must read it to set the header
@@ -567,7 +673,7 @@ export class AuthService implements OnModuleDestroy {
       sameSite: "strict" as const,
       secure: true,
       path: "/",
-      maxAge: 300,
+      maxAge: 300
     });
   }
 

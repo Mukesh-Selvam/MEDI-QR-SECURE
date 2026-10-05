@@ -8,12 +8,12 @@ import {
   ParseUUIDPipe,
   Put,
   Req,
-  UseGuards,
+  UseGuards
 } from "@nestjs/common";
 import type { FastifyRequest } from "fastify";
 import {
   CurrentUser,
-  type AuthenticatedUser,
+  type AuthenticatedUser
 } from "../auth/decorators/current-user.decorator.js";
 import { RequirePolicy } from "../auth/decorators/policy.decorator.js";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard.js";
@@ -26,7 +26,7 @@ import { emergencyProfileSchema } from "./emergency-profile.schema.js";
 export class EmergencyProfileController {
   constructor(
     @Inject(EmergencyProfileService)
-    private readonly profiles: EmergencyProfileService,
+    private readonly profiles: EmergencyProfileService
   ) {}
 
   @Get(":patientId")
@@ -34,8 +34,15 @@ export class EmergencyProfileController {
   read(
     @Param("patientId", ParseUUIDPipe) patientId: string,
     @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: FastifyRequest
   ) {
-    return this.profiles.read(patientId, actor);
+    const agent = request.headers["user-agent"];
+    return this.profiles.read(
+      patientId,
+      actor,
+      request.ip,
+      typeof agent === "string" ? agent : undefined
+    );
   }
 
   @Put(":patientId")
@@ -44,7 +51,7 @@ export class EmergencyProfileController {
     @Param("patientId", ParseUUIDPipe) patientId: string,
     @Body() body: unknown,
     @CurrentUser() actor: AuthenticatedUser,
-    @Req() request: FastifyRequest,
+    @Req() request: FastifyRequest
   ) {
     const parsed = emergencyProfileSchema.safeParse(body);
     if (!parsed.success) {
@@ -56,7 +63,7 @@ export class EmergencyProfileController {
       actor,
       parsed.data,
       request.ip,
-      typeof agent === "string" ? agent : undefined,
+      typeof agent === "string" ? agent : undefined
     );
   }
 }

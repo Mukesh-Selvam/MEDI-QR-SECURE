@@ -24,8 +24,9 @@ vi.mock("../../../config/env.js", () => ({
     REDIS_PASSWORD: "test",
     SESSION_SECRET: "test_session_secret_min_32_chars_abcdefgh",
     AUDIT_HMAC_KEY: "test_audit_hmac_key_min_32_chars_abcdefgh",
-    NODE_ENV: "test",
-  },
+    MASTER_ENCRYPTION_KEY: Buffer.alloc(32, 0x12).toString("hex"),
+    NODE_ENV: "test"
+  }
 }));
 
 // ---------------------------------------------------------------------------
@@ -42,7 +43,9 @@ vi.mock("ioredis", () => {
     }),
     del: vi.fn(async (...keys: string[]) => {
       let count = 0;
-      for (const k of keys) { if (redisStore.delete(k)) count++; }
+      for (const k of keys) {
+        if (redisStore.delete(k)) count++;
+      }
       return count;
     }),
     incr: vi.fn(async (key: string) => {
@@ -52,7 +55,7 @@ vi.mock("ioredis", () => {
     }),
     expire: vi.fn(async () => 1),
     ttl: vi.fn(async () => -2),
-    on: vi.fn().mockReturnThis(),
+    on: vi.fn().mockReturnThis()
   }));
   return { Redis: MockRedis };
 });
@@ -62,45 +65,105 @@ vi.mock("ioredis", () => {
 // ---------------------------------------------------------------------------
 let mockFindFirstResult: unknown = null;
 
+const tableTokens = vi.hoisted(() => ({
+  users: { name: "users", phone: "phone", id: "id" },
+  patients: { name: "patients", id: "id", userId: "userId" }
+}));
+let insertedPatientValues: Record<string, unknown> | undefined;
+
 vi.mock("../../../database/index.js", () => ({
   db: {
     query: {
       users: {
-        findFirst: vi.fn(async () => mockFindFirstResult),
-      },
+        findFirst: vi.fn(async () => mockFindFirstResult)
+      }
     },
+    transaction: vi.fn(
+      async (callback: (transaction: object) => Promise<unknown>) => {
+        const transaction = {
+          select: vi.fn(() => {
+            let selectedTable: unknown;
+            const query = {
+              from: vi.fn((table: unknown) => {
+                selectedTable = table;
+                return query;
+              }),
+              where: vi.fn(() => query),
+              for: vi.fn(() => query),
+              limit: vi.fn(async () =>
+                selectedTable === tableTokens.users && mockFindFirstResult
+                  ? [mockFindFirstResult]
+                  : []
+              )
+            };
+            return query;
+          }),
+          insert: vi.fn((table: unknown) => ({
+            values: vi.fn((values: Record<string, unknown>) => {
+              if (table === tableTokens.patients) {
+                insertedPatientValues = values;
+                return Promise.resolve();
+              }
+              const newUser = {
+                id: "user-uuid-1234",
+                role: "patient",
+                status: "active",
+                phone: values["phone"],
+                facilityId: null
+              };
+              return {
+                onConflictDoNothing: vi.fn(() => ({
+                  returning: vi.fn(async () => [newUser])
+                }))
+              };
+            })
+          }))
+        };
+        return callback(transaction);
+      }
+    ),
     insert: vi.fn(() => ({
       values: vi.fn(() => ({
         returning: vi.fn(async () => [
-          { id: "user-uuid-1234", role: "patient", status: "active", phone: "+919876543210" },
-        ]),
-      })),
+          {
+            id: "user-uuid-1234",
+            role: "patient",
+            status: "active",
+            phone: "+919876543210"
+          }
+        ])
+      }))
     })),
     update: vi.fn(() => ({
       set: vi.fn(() => ({
-        where: vi.fn(async () => []),
-      })),
+        where: vi.fn(async () => [])
+      }))
     })),
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         where: vi.fn(() => ({
-          limit: vi.fn(async () => []),
-        })),
-      })),
-    })),
-  },
+          limit: vi.fn(async () => [])
+        }))
+      }))
+    }))
+  }
 }));
 
 vi.mock("../../../database/schema.js", () => ({
-  users: { phone: "phone", id: "id" },
-  sessions: { userId: "userId", refreshTokenHash: "refreshTokenHash", revokedAt: "revokedAt" },
+  users: tableTokens.users,
+  patients: tableTokens.patients,
+  sessions: {
+    userId: "userId",
+    refreshTokenHash: "refreshTokenHash",
+    revokedAt: "revokedAt"
+  }
 }));
 
 vi.mock("drizzle-orm", () => ({
   eq: vi.fn(),
   and: vi.fn(),
   isNull: vi.fn(),
-  gt: vi.fn(),
+  gt: vi.fn()
 }));
 
 import { AuthService } from "../auth.service.js";
@@ -116,7 +179,7 @@ function makeSmsProvider(): SmsProvider & { lastOtp: string | null } {
     lastOtp: null as string | null,
     sendOtp: vi.fn(async (_phone: string, otp: string) => {
       provider.lastOtp = otp;
-    }),
+    })
   };
   return provider;
 }
@@ -124,14 +187,14 @@ function makeSmsProvider(): SmsProvider & { lastOtp: string | null } {
 function makeAuditService(): AuditService {
   return {
     log: vi.fn(async () => {}),
-    hashIp: vi.fn(() => "hashed-ip"),
+    hashIp: vi.fn(() => "hashed-ip")
   } as unknown as AuditService;
 }
 
 function makeFastifyReply(): FastifyReply {
   return {
     setCookie: vi.fn(),
-    clearCookie: vi.fn(),
+    clearCookie: vi.fn()
   } as unknown as FastifyReply;
 }
 
@@ -151,6 +214,7 @@ describe("AuthService — OTP flow", () => {
   beforeEach(() => {
     redisStore.clear();
     mockFindFirstResult = null;
+    insertedPatientValues = undefined;
     sms = makeSmsProvider();
     audit = makeAuditService();
     service = new AuthService(sms, audit);
@@ -164,12 +228,12 @@ describe("AuthService — OTP flow", () => {
   });
 
   it("sendOtp: invalid phone format throws BadRequestException", async () => {
-    await expect(service.sendOtp("9876543210", IP_HASH, REQUEST_ID)).rejects.toThrow(
-      BadRequestException
-    );
-    await expect(service.sendOtp("+1-800-555-0100", IP_HASH, REQUEST_ID)).rejects.toThrow(
-      BadRequestException
-    );
+    await expect(
+      service.sendOtp("9876543210", IP_HASH, REQUEST_ID)
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      service.sendOtp("+1-800-555-0100", IP_HASH, REQUEST_ID)
+    ).rejects.toThrow(BadRequestException);
   });
 
   it("sendOtp: stores only the HMAC — not the raw OTP — in Redis", async () => {
@@ -190,9 +254,15 @@ describe("AuthService — OTP flow", () => {
 
     try {
       await service.sendOtp(VALID_PHONE, IP_HASH, REQUEST_ID);
-      expect(logSpy).toHaveBeenCalledWith(`OTP dispatched for request ${REQUEST_ID}`);
-      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining(VALID_PHONE));
-      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining(phoneHash));
+      expect(logSpy).toHaveBeenCalledWith(
+        `OTP dispatched for request ${REQUEST_ID}`
+      );
+      expect(logSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining(VALID_PHONE)
+      );
+      expect(logSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining(phoneHash)
+      );
     } finally {
       logSpy.mockRestore();
     }
@@ -220,6 +290,18 @@ describe("AuthService — OTP flow", () => {
     expect(result.message).toContain("successful");
     expect(result.csrfToken).toBeTruthy();
     expect(result.csrfToken.length).toBeGreaterThan(16);
+    expect(insertedPatientValues).toMatchObject({
+      userId: "user-uuid-1234",
+      healthId: expect.stringMatching(/^MEDIQR-[0-9a-f-]{36}$/i),
+      fullName: "Not provided",
+      phoneHash: expect.stringMatching(/^[0-9a-f]{64}$/i)
+    });
+    expect(insertedPatientValues?.["encryptedPhone"]).not.toContain(
+      VALID_PHONE
+    );
+    expect(
+      JSON.parse(String(insertedPatientValues?.["encryptedPhone"]))
+    ).toMatchObject({ version: 1 });
     // access cookie + refresh cookie + csrf cookie
     expect(reply.setCookie).toHaveBeenCalledTimes(3);
   });
@@ -229,7 +311,7 @@ describe("AuthService — OTP flow", () => {
       id: "staff-user-id",
       role: "clinician",
       status: "active",
-      phone: VALID_PHONE,
+      phone: VALID_PHONE
     };
     await service.sendOtp(VALID_PHONE, IP_HASH, REQUEST_ID);
 
@@ -247,11 +329,23 @@ describe("AuthService — OTP flow", () => {
   it("verifyOtp: OTP is single-use — second attempt throws", async () => {
     await service.sendOtp(VALID_PHONE, IP_HASH, REQUEST_ID);
     const correctOtp = sms.lastOtp!;
-    await service.verifyOtp(VALID_PHONE, correctOtp, IP_HASH, UA, makeFastifyReply());
+    await service.verifyOtp(
+      VALID_PHONE,
+      correctOtp,
+      IP_HASH,
+      UA,
+      makeFastifyReply()
+    );
 
     // Second attempt — OTP key deleted from Redis
     await expect(
-      service.verifyOtp(VALID_PHONE, correctOtp, IP_HASH, UA, makeFastifyReply())
+      service.verifyOtp(
+        VALID_PHONE,
+        correctOtp,
+        IP_HASH,
+        UA,
+        makeFastifyReply()
+      )
     ).rejects.toThrow(BadRequestException);
   });
 
@@ -267,9 +361,9 @@ describe("AuthService — OTP flow", () => {
     // Simulate 3 prior sends
     redisStore.set(`otp:send:${phoneHash}`, "3");
     // 4th send should be rate-limited
-    await expect(service.sendOtp(VALID_PHONE, "diff-ip-hash", REQUEST_ID)).rejects.toThrow(
-      HttpException
-    );
+    await expect(
+      service.sendOtp(VALID_PHONE, "diff-ip-hash", REQUEST_ID)
+    ).rejects.toThrow(HttpException);
   });
 
   it("verifyOtp: exceeding 5 attempts invalidates the code and triggers lockout (Condition 1)", async () => {
@@ -278,7 +372,13 @@ describe("AuthService — OTP flow", () => {
 
     for (let i = 1; i <= 4; i++) {
       await expect(
-        service.verifyOtp(VALID_PHONE, "000000", IP_HASH, UA, makeFastifyReply())
+        service.verifyOtp(
+          VALID_PHONE,
+          "000000",
+          IP_HASH,
+          UA,
+          makeFastifyReply()
+        )
       ).rejects.toThrow(BadRequestException);
     }
 

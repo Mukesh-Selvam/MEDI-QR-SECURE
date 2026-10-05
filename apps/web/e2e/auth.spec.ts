@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { Client } from "pg";
@@ -30,7 +30,8 @@ interface MailpitMessage {
   Text: string;
 }
 
-const keycloakBaseUrl = process.env.KEYCLOAK_BASE_URL ?? "http://localhost:8080";
+const keycloakBaseUrl =
+  process.env.KEYCLOAK_BASE_URL ?? "http://localhost:8080";
 const realm = process.env.KEYCLOAK_REALM ?? "mediqr";
 const adminUsername = process.env.KEYCLOAK_ADMIN_USER ?? "admin";
 const adminPassword = process.env.KEYCLOAK_ADMIN_PASSWORD;
@@ -42,8 +43,8 @@ let adminToken: string;
 let clinicianKeycloakId: string;
 let clinicianDatabaseId: string;
 let clinicianTotpSecret = "";
-let patientUserId = "";
-let patientDatabaseId = "";
+const patientUserIds = new Set<string>();
+const patientDatabaseIds = new Set<string>();
 
 test.describe("browser authentication", () => {
   test.beforeAll(async () => {
@@ -56,17 +57,17 @@ test.describe("browser authentication", () => {
   });
 
   test.afterAll(async () => {
-    if (patientDatabaseId || patientUserId) {
+    if (patientDatabaseIds.size || patientUserIds.size) {
       const connection = await createDatabaseClient();
       try {
         await connection.connect();
-        if (patientDatabaseId) {
+        for (const patientDatabaseId of patientDatabaseIds) {
           await connection.query(
             "DELETE FROM emergency_profiles WHERE patient_id = $1",
             [patientDatabaseId]
           );
         }
-        if (patientUserId) {
+        for (const patientUserId of patientUserIds) {
           await connection.query(
             `UPDATE users
              SET status = 'suspended', phone = NULL, email = NULL, keycloak_id = NULL
@@ -84,7 +85,7 @@ test.describe("browser authentication", () => {
       try {
         await connection.connect();
         await connection.query("DELETE FROM clinicians WHERE user_id = $1", [
-          clinicianDatabaseId,
+          clinicianDatabaseId
         ]);
         await connection.query(
           `UPDATE users
@@ -105,11 +106,10 @@ test.describe("browser authentication", () => {
     }
   });
 
-  test("patient completes OTP sign-in using a fake number", async ({ page }) => {
-    const phone = `+919${randomBytes(4).readUInt32BE(0)
-      .toString()
-      .padStart(10, "0")
-      .slice(-9)}`;
+  test("patient completes OTP sign-in using a fake number", async ({
+    page
+  }) => {
+    const phone = `+919${randomBytes(4).readUInt32BE(0).toString().padStart(10, "0").slice(-9)}`;
     await page.goto("/login/patient");
     await page.locator('input[type="tel"]').fill(phone.slice(3));
     await page.getByRole("button", { name: "Send Verification OTP" }).click();
@@ -129,31 +129,44 @@ test.describe("browser authentication", () => {
       id: string;
       patientId: string | null;
     };
-    patientUserId = profile.id;
-    patientDatabaseId = profile.patientId ?? "";
+    patientUserIds.add(profile.id);
+    expect(profile.patientId).not.toBeNull();
+    expect(profile.patientId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    );
+    if (!profile.patientId) {
+      throw new Error("OTP login did not return a patient profile.");
+    }
+    patientDatabaseIds.add(profile.patientId);
 
     await page.goto("/patient/emergency");
     await expect(
       page.getByRole("heading", { name: "Emergency details" })
     ).toBeVisible();
     const emergencyOptIn = page.getByRole("checkbox", {
-      name: /Allow emergency access to these details/,
+      name: /Allow emergency access to these details/
     });
     await expect(emergencyOptIn).not.toBeChecked();
     await page.getByLabel("Allergies").fill("FAKE E2E declared allergy");
-    await page.getByRole("button", { name: "Add an emergency contact" }).click();
+    await page
+      .getByRole("button", { name: "Add an emergency contact" })
+      .click();
     await page.getByLabel("Contact name").fill("FAKE E2E Contact");
     await page.getByLabel("Relationship").fill("guardian");
     await page.getByLabel("Contact phone").fill("+910000000000");
     await emergencyOptIn.check();
     await page.getByRole("button", { name: "Save emergency details" }).click();
     await expect(
-      page.getByRole("status").getByText("Your emergency details have been saved.")
+      page
+        .getByRole("status")
+        .getByText("Your emergency details have been saved.")
     ).toBeVisible();
     await emergencyOptIn.uncheck();
     await page.getByRole("button", { name: "Save emergency details" }).click();
     await expect(
-      page.getByRole("status").getByText("Your emergency details have been saved.")
+      page
+        .getByRole("status")
+        .getByText("Your emergency details have been saved.")
     ).toBeVisible();
 
     await page.goto("/patient/notifications");
@@ -165,8 +178,36 @@ test.describe("browser authentication", () => {
     ).toBeVisible();
   });
 
+  test("emergency details stay unavailable when the account has no patient profile", async ({
+    page
+  }) => {
+    await page.route("**/api/v1/auth/me", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ patientId: null, role: "patient" })
+      })
+    );
+    await page.route("**/api/v1/access/requests/inbox", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ wards: [] })
+      })
+    );
+
+    await page.goto("/patient/emergency");
+    await expect(page.locator("main p[role='alert']")).toContainText(
+      "No patient profile is available for this account."
+    );
+    await expect(page.locator("form")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Save emergency details" })
+    ).toHaveCount(0);
+  });
+
   test("clinician signs in through Keycloak but unverified access is denied", async ({
-    page,
+    page
   }) => {
     await page.goto("/login/clinician");
     await page
@@ -187,9 +228,11 @@ test.describe("browser authentication", () => {
         passwordFields: await page.locator("#password").count(),
         otpForms: await page.locator("#kc-otp-login-form").count(),
         invalidCredentials:
-          (await page.getByText("Invalid username or password").count()) > 0,
+          (await page.getByText("Invalid username or password").count()) > 0
       };
-      throw new Error(`Unexpected Keycloak MFA page: ${JSON.stringify(pageState)}`);
+      throw new Error(
+        `Unexpected Keycloak MFA page: ${JSON.stringify(pageState)}`
+      );
     }
     await page.locator("#mode-manual").click();
     const secret = (await page.locator("#kc-totp-secret-key").innerText())
@@ -236,13 +279,13 @@ test.describe("browser authentication", () => {
               "isVerified" in sessionBody &&
               typeof sessionBody.isVerified === "boolean"
                 ? sessionBody.isVerified
-                : undefined,
+                : undefined
           }
         : { status: sessionResponse.status() };
     expect(sessionSummary).toEqual({
       status: 200,
       role: "clinician",
-      isVerified: false,
+      isVerified: false
     });
     await expect(
       page.getByRole("heading", { name: "Pending verification" })
@@ -255,7 +298,7 @@ test.describe("browser authentication", () => {
   });
 
   test("clinician scans, patient approves, reads a document, and revokes access", async ({
-    browser,
+    browser
   }, testInfo) => {
     if (!clinicianTotpSecret) {
       throw new Error("The seeded fake clinician MFA setup did not complete.");
@@ -275,13 +318,12 @@ test.describe("browser authentication", () => {
 
     const patientContext = await browser.newContext();
     const patientPage = await patientContext.newPage();
-    const phone = `+919${randomBytes(4).readUInt32BE(0)
-      .toString()
-      .padStart(10, "0")
-      .slice(-9)}`;
+    const phone = `+919${randomBytes(4).readUInt32BE(0).toString().padStart(10, "0").slice(-9)}`;
     await patientPage.goto("/login/patient");
     await patientPage.locator('input[type="tel"]').fill(phone.slice(3));
-    await patientPage.getByRole("button", { name: "Send Verification OTP" }).click();
+    await patientPage
+      .getByRole("button", { name: "Send Verification OTP" })
+      .click();
     const patientOtp = await readOtpFromMailpit(phone);
     await patientPage.locator('input[placeholder="123456"]').fill(patientOtp);
     await patientPage.getByRole("button", { name: "Verify & Sign In" }).click();
@@ -293,31 +335,20 @@ test.describe("browser authentication", () => {
     if (!profileResponse.ok()) {
       throw new Error("The fake patient session could not be resolved.");
     }
-    const profile = (await profileResponse.json()) as { id?: string };
-    if (!profile.id) throw new Error("The fake patient session was not resolved.");
-    patientUserId = profile.id;
-    patientDatabaseId = randomUUID();
-    const patientLookup = await createDatabaseClient();
-    try {
-      await patientLookup.connect();
-      await patientLookup.query(
-        `INSERT INTO patients (
-           id, user_id, health_id, full_name, phone_hash, encrypted_phone
-         ) VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          patientDatabaseId,
-          patientUserId,
-          `E2E-FAKE-${randomUUID()}`,
-          "Fake E2E Patient",
-          createHash("sha256").update(randomBytes(32)).digest("hex"),
-          "e2e-test-only-ciphertext",
-        ]
-      );
-      patientRecordId = patientDatabaseId;
-    } finally {
-      await patientLookup.end();
+    const profile = (await profileResponse.json()) as {
+      id?: string;
+      patientId?: string | null;
+    };
+    if (!profile.id)
+      throw new Error("The fake patient session was not resolved.");
+    if (!profile.patientId) {
+      throw new Error("The fake patient profile was not provisioned.");
     }
-    if (!patientRecordId) throw new Error("The fake patient record was not created.");
+    patientUserIds.add(profile.id);
+    patientDatabaseIds.add(profile.patientId);
+    patientRecordId = profile.patientId;
+    if (!patientRecordId)
+      throw new Error("The fake patient record was not created.");
 
     await patientPage.goto("/patient/credentials");
     const credentialResponsePromise = patientPage.waitForResponse(
@@ -325,7 +356,9 @@ test.describe("browser authentication", () => {
         response.url().includes("/api/v1/qr/credentials") &&
         response.request().method() === "POST"
     );
-    await patientPage.getByRole("button", { name: "Create printed QR" }).click();
+    await patientPage
+      .getByRole("button", { name: "Create printed QR" })
+      .click();
     const credentialResponse = await credentialResponsePromise;
     if (!credentialResponse.ok()) {
       throw new Error("The patient QR credential could not be issued.");
@@ -337,35 +370,38 @@ test.describe("browser authentication", () => {
       throw new Error("The patient QR credential response was incomplete.");
     }
 
-    const uploadResult = await patientPage.evaluate(async ({ patientId, pdfContent }) => {
-      const csrfCookie = document.cookie
-        .split("; ")
-        .find((item) => item.startsWith("__Host-mediqr-csrf="));
-      const csrfToken = csrfCookie
-        ? decodeURIComponent(csrfCookie.slice("__Host-mediqr-csrf=".length))
-        : "";
-      const form = new FormData();
-      form.append("documentType", "lab");
-      form.append("patientId", patientId);
-      form.append("documentDate", new Date().toISOString());
-      form.append(
-        "file",
-        new File([pdfContent], "fake-lab.pdf", {
-          type: "application/pdf",
-        })
-      );
-      const response = await fetch("/api/v1/vault/upload", {
-        method: "POST",
-        headers: {
-          "x-csrf-token": csrfToken,
-          "x-mediqr-patient-id": patientId,
-        },
-        body: form,
-        cache: "no-store",
-      });
-      const body: unknown = await response.json();
-      return { status: response.status, body };
-    }, { patientId: patientRecordId, pdfContent: createMinimalTestPdf() });
+    const uploadResult = await patientPage.evaluate(
+      async ({ patientId, pdfContent }) => {
+        const csrfCookie = document.cookie
+          .split("; ")
+          .find((item) => item.startsWith("__Host-mediqr-csrf="));
+        const csrfToken = csrfCookie
+          ? decodeURIComponent(csrfCookie.slice("__Host-mediqr-csrf=".length))
+          : "";
+        const form = new FormData();
+        form.append("documentType", "lab");
+        form.append("patientId", patientId);
+        form.append("documentDate", new Date().toISOString());
+        form.append(
+          "file",
+          new File([pdfContent], "fake-lab.pdf", {
+            type: "application/pdf"
+          })
+        );
+        const response = await fetch("/api/v1/vault/upload", {
+          method: "POST",
+          headers: {
+            "x-csrf-token": csrfToken,
+            "x-mediqr-patient-id": patientId
+          },
+          body: form,
+          cache: "no-store"
+        });
+        const body: unknown = await response.json();
+        return { status: response.status, body };
+      },
+      { patientId: patientRecordId, pdfContent: createMinimalTestPdf() }
+    );
     if (uploadResult.status !== 202) {
       throw new Error("The fake record could not be staged for scanning.");
     }
@@ -401,7 +437,7 @@ test.describe("browser authentication", () => {
     await clinicianPage.locator("#kc-login").click();
     await clinicianPage.locator("#kc-otp-login-form").waitFor({
       state: "visible",
-      timeout: 15_000,
+      timeout: 15_000
     });
     await waitForNextTotpWindow();
     await clinicianPage.locator("#otp").fill(generateTotp(clinicianTotpSecret));
@@ -446,7 +482,9 @@ test.describe("browser authentication", () => {
       throw new Error("The access request response was incomplete.");
     }
     await expect(
-      clinicianPage.getByText("Request sent. Waiting for the patient to review it.")
+      clinicianPage.getByText(
+        "Request sent. Waiting for the patient to review it."
+      )
     ).toBeVisible();
 
     await patientPage.goto("/patient/access");
@@ -463,7 +501,7 @@ test.describe("browser authentication", () => {
     ).toBeVisible();
     await patientPage.screenshot({
       path: testInfo.outputPath("consent-flow-approved.png"),
-      fullPage: true,
+      fullPage: true
     });
 
     const consoleStatusResponsePromise = clinicianPage.waitForResponse(
@@ -502,7 +540,9 @@ test.describe("browser authentication", () => {
     const consoleTimelineResponse = await consoleTimelineResponsePromise;
     expect(consoleTimelineResponse.status()).toBe(200);
     await expect(
-      clinicianPage.getByRole("heading", { name: "Consent-scoped record view" })
+      clinicianPage.getByRole("heading", {
+        name: "Consent-scoped record view"
+      })
     ).toBeVisible();
     await expect(clinicianPage.getByText("Access is active")).toBeVisible();
     await expect(
@@ -516,7 +556,9 @@ test.describe("browser authentication", () => {
       clinicianPage.locator(
         'section[aria-label="Read-only secure record viewer"] canvas'
       )
-    ).toBeVisible({ timeout: 15_000 });
+    ).toBeVisible({
+      timeout: 15_000
+    });
     await expect(
       clinicianPage.getByRole("button", { name: /download/i })
     ).toHaveCount(0);
@@ -533,11 +575,15 @@ test.describe("browser authentication", () => {
       patientPage.getByRole("status").filter({ hasText: "Access ended" })
     ).toBeVisible();
     await expect(
-      clinicianPage.getByRole("alert").filter({ hasText: "Consent has been revoked" })
-    ).toBeVisible({ timeout: 10_000 });
+      clinicianPage
+        .getByRole("alert")
+        .filter({ hasText: "Consent has been revoked" })
+    ).toBeVisible({
+      timeout: 10_000
+    });
     await patientPage.screenshot({
       path: testInfo.outputPath("consent-flow-revoked.png"),
-      fullPage: true,
+      fullPage: true
     });
 
     function createMinimalTestPdf(): string {
@@ -547,7 +593,7 @@ test.describe("browser authentication", () => {
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 180] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}endstream`,
+        `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}endstream`
       ];
       let document = "%PDF-1.4\n";
       const offsets: number[] = [];
@@ -587,7 +633,9 @@ test.describe("browser authentication", () => {
   });
 });
 
-async function expectCliToDetectAuditTampering(requestId: string): Promise<void> {
+async function expectCliToDetectAuditTampering(
+  requestId: string
+): Promise<void> {
   const connection = await createDatabaseClient();
   let auditEventId: string | undefined;
   let originalAction: string | undefined;
@@ -631,7 +679,7 @@ async function expectCliToDetectAuditTampering(requestId: string): Promise<void>
         cwd: resolve(process.cwd(), "../.."),
         encoding: "utf8",
         shell: process.platform === "win32",
-        timeout: 60_000,
+        timeout: 60_000
       }
     );
     const verifierOutput = `${verifier.stdout ?? ""}${verifier.stderr ?? ""}`;
@@ -640,7 +688,9 @@ async function expectCliToDetectAuditTampering(requestId: string): Promise<void>
       verifier.status === 0 ||
       !verifierOutput.includes("Audit chain verification failed")
     ) {
-      throw new Error("The audit verifier CLI did not detect the tampered row.");
+      throw new Error(
+        "The audit verifier CLI did not detect the tampered row."
+      );
     }
   } finally {
     if (tamperingCommitted && auditEventId && originalAction) {
@@ -667,11 +717,12 @@ async function getKeycloakAdminToken(): Promise<string> {
         grant_type: "password",
         client_id: "admin-cli",
         username: adminUsername,
-        password: adminPassword!,
-      }),
+        password: adminPassword!
+      })
     }
   );
-  if (!response.ok) throw new Error("Could not authenticate the browser-test administrator.");
+  if (!response.ok)
+    throw new Error("Could not authenticate the browser-test administrator.");
   return ((await response.json()) as KeycloakTokenResponse).access_token;
 }
 
@@ -682,8 +733,8 @@ async function createFakeClinician(): Promise<string> {
       username: clinicianUsername,
       email: clinicianEmail,
       enabled: true,
-      emailVerified: true,
-    }),
+      emailVerified: true
+    })
   });
   if (createResponse.status !== 201) {
     throw new Error("Could not create the fake Keycloak clinician.");
@@ -703,10 +754,14 @@ async function createFakeClinician(): Promise<string> {
     `/admin/realms/${realm}/roles/clinician`
   );
   const role = (await roleResponse.json()) as KeycloakRole;
-  if (!roleResponse.ok) throw new Error("Could not load the clinician realm role.");
+  if (!roleResponse.ok)
+    throw new Error("Could not load the clinician realm role.");
   const mappingResponse = await keycloakRequest(
     `/admin/realms/${realm}/users/${id}/role-mappings/realm`,
-    { method: "POST", body: JSON.stringify([role]) }
+    {
+      method: "POST",
+      body: JSON.stringify([role])
+    }
   );
   if (mappingResponse.status !== 204) {
     throw new Error("Could not assign the fake clinician realm role.");
@@ -719,8 +774,8 @@ async function createFakeClinician(): Promise<string> {
       body: JSON.stringify({
         type: "password",
         value: clinicianPassword,
-        temporary: false,
-      }),
+        temporary: false
+      })
     }
   );
   if (passwordResponse.status !== 204) {
@@ -733,8 +788,8 @@ async function createFakeClinician(): Promise<string> {
       method: "PUT",
       body: JSON.stringify({
         ...user,
-        requiredActions: ["CONFIGURE_TOTP"],
-      }),
+        requiredActions: ["CONFIGURE_TOTP"]
+      })
     }
   );
   if (setupMfaResponse.status !== 204) {
@@ -773,7 +828,7 @@ async function createDatabaseClient(): Promise<Client> {
     port: Number(process.env.DB_PORT ?? "5432"),
     database: process.env.DB_NAME,
     user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
+    password: process.env.DB_PASSWORD
   });
 }
 
@@ -786,8 +841,8 @@ async function keycloakRequest(
     headers: {
       authorization: `Bearer ${adminToken}`,
       ...(init.body ? { "content-type": "application/json" } : {}),
-      ...init.headers,
-    },
+      ...init.headers
+    }
   });
 }
 
@@ -798,7 +853,9 @@ async function readOtpFromMailpit(phone: string): Promise<string> {
     );
     if (listResponse.ok) {
       const list = (await listResponse.json()) as MailpitMessages;
-      const message = list.messages.find((entry) => entry.Subject.includes(phone));
+      const message = list.messages.find((entry) =>
+        entry.Subject.includes(phone)
+      );
       if (message) {
         const detailResponse = await fetch(
           `http://127.0.0.1:8025/api/v1/message/${encodeURIComponent(message.ID)}`

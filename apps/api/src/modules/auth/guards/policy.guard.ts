@@ -9,11 +9,14 @@ import {
   ExecutionContext,
   ForbiddenException,
   Inject,
-  Injectable,
+  Injectable
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { GRPC } from "@cerbos/grpc";
-import { POLICY_KEY, type PolicyMetadata } from "../decorators/policy.decorator.js";
+import {
+  POLICY_KEY,
+  type PolicyMetadata
+} from "../decorators/policy.decorator.js";
 import { PUBLIC_ROUTE_KEY } from "../decorators/public.decorator.js";
 import type { AuthenticatedUser } from "../decorators/current-user.decorator.js";
 import type { FastifyRequest } from "fastify";
@@ -31,28 +34,27 @@ import {
   findPatientOwner,
   findPatientOwnerByUserId,
   hasActiveFacilityPatientRelationship,
-  type PatientOwner,
+  type PatientOwner
 } from "../patient-access.js";
 
 type ResolvedPatient = PatientOwner;
+const EMERGENCY_PROFILE_UNAVAILABLE = "Emergency profile unavailable.";
 
 @Injectable()
 export class PolicyGuard implements CanActivate {
   private readonly cerbos: GRPC;
 
   constructor(@Inject(Reflector) private readonly reflector: Reflector) {
-    const host = env.CERBOS_HOST === "localhost" ? "127.0.0.1" : env.CERBOS_HOST;
-    this.cerbos = new GRPC(
-      `${host}:${env.CERBOS_PORT}`,
-      { tls: false }
-    );
+    const host =
+      env.CERBOS_HOST === "localhost" ? "127.0.0.1" : env.CERBOS_HOST;
+    this.cerbos = new GRPC(`${host}:${env.CERBOS_PORT}`, { tls: false });
   }
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
-    const isPublic = this.reflector.getAllAndOverride<boolean>(PUBLIC_ROUTE_KEY, [
-      ctx.getHandler(),
-      ctx.getClass(),
-    ]);
+    const isPublic = this.reflector.getAllAndOverride<boolean>(
+      PUBLIC_ROUTE_KEY,
+      [ctx.getHandler(), ctx.getClass()]
+    );
     if (isPublic) return true;
 
     const policy = this.reflector.getAllAndOverride<PolicyMetadata | undefined>(
@@ -68,9 +70,8 @@ export class PolicyGuard implements CanActivate {
     }
 
     const request = ctx.switchToHttp().getRequest<FastifyRequest>();
-    const user = (request as unknown as Record<string, unknown>)[
-      "user"
-    ] as AuthenticatedUser | undefined;
+    const user = (request as unknown as Record<string, unknown>)["user"] as
+      AuthenticatedUser | undefined;
 
     if (!user) {
       throw new ForbiddenException("Unauthenticated");
@@ -112,6 +113,9 @@ export class PolicyGuard implements CanActivate {
         !verifiedClinicianConsentRead &&
         !clinicianDocumentRead
       ) {
+        if (policy.resource === "emergency-profile") {
+          throw new ForbiddenException(EMERGENCY_PROFILE_UNAVAILABLE);
+        }
         throw new ForbiddenException(
           "Clinician access is unavailable without an approved consent"
         );
@@ -121,13 +125,11 @@ export class PolicyGuard implements CanActivate {
       let documentType: string | undefined;
       let hasConsentGrant = false;
       let consentResource:
-        | Awaited<ReturnType<typeof findConsentResource>>
-        | undefined;
+        Awaited<ReturnType<typeof findConsentResource>> | undefined;
       let notificationOwnerId: string | undefined;
       let requestGranteeId: string | undefined;
       let requestConsentContext:
-        | Awaited<ReturnType<typeof findActiveRequestConsentContext>>
-        | undefined;
+        Awaited<ReturnType<typeof findActiveRequestConsentContext>> | undefined;
       if (
         policy.resource === "notification" &&
         policy.action === "update" &&
@@ -138,13 +140,12 @@ export class PolicyGuard implements CanActivate {
           throw new ForbiddenException("Notification not found");
         }
       }
-      if (
-        policy.resource === "document" &&
-        policy.action === "read"
-      ) {
+      if (policy.resource === "document" && policy.action === "read") {
         if (params?.requestId) {
           if (user.role !== "clinician" || user.isVerified !== true) {
-            throw new ForbiddenException("Verified clinician access is required");
+            throw new ForbiddenException(
+              "Verified clinician access is required"
+            );
           }
           requestConsentContext = await findActiveRequestConsentContext(
             params.requestId,
@@ -170,10 +171,7 @@ export class PolicyGuard implements CanActivate {
           throw new ForbiddenException("Document or patient record not found");
         }
       }
-      if (
-        policy.resource === "document" &&
-        policy.action === "create"
-      ) {
+      if (policy.resource === "document" && policy.action === "create") {
         patient = await this.resolveDocumentPatient(request, params, policy);
         if (!patient) {
           throw new ForbiddenException("Document or patient record not found");
@@ -199,14 +197,10 @@ export class PolicyGuard implements CanActivate {
           ? await findPatientOwner(params.patientId)
           : undefined;
         if (!patient) {
-          throw new ForbiddenException("Emergency profile not found");
+          throw new ForbiddenException(EMERGENCY_PROFILE_UNAVAILABLE);
         }
-        if (
-          user.role !== "patient" &&
-          user.role !== "guardian" &&
-          user.role !== "platform-admin"
-        ) {
-          throw new ForbiddenException("Emergency profile access is unavailable");
+        if (user.role !== "patient" && user.role !== "guardian") {
+          throw new ForbiddenException(EMERGENCY_PROFILE_UNAVAILABLE);
         }
       }
 
@@ -216,7 +210,9 @@ export class PolicyGuard implements CanActivate {
         params?.id
       ) {
         if (policy.action === "read-status") {
-          const requestContext = await findAccessRequestPolicyContext(params.id);
+          const requestContext = await findAccessRequestPolicyContext(
+            params.id
+          );
           if (
             user.role !== "clinician" ||
             user.isVerified !== true ||
@@ -266,14 +262,15 @@ export class PolicyGuard implements CanActivate {
       }
 
       const guardianWardIds =
-        user.role === "guardian"
-          ? await findGuardianWardOwnerIds(user.id)
-          : [];
+        user.role === "guardian" ? await findGuardianWardOwnerIds(user.id) : [];
       const hasPatientRelationship =
         patient &&
         user.facilityId &&
         (user.role === "facility-admin" || user.role === "pharmacy-staff")
-          ? await hasActiveFacilityPatientRelationship(user.facilityId, patient.id)
+          ? await hasActiveFacilityPatientRelationship(
+              user.facilityId,
+              patient.id
+            )
           : false;
 
       const decision = await this.cerbos.checkResource({
@@ -287,38 +284,41 @@ export class PolicyGuard implements CanActivate {
             has_scope: hasConsentGrant,
             has_patient_relationship: hasPatientRelationship,
             guardian_ward_ids: guardianWardIds,
-            facility_id: user.facilityId ?? "",
-          },
+            facility_id: user.facilityId ?? ""
+          }
         },
         resource: {
           kind: policy.resource,
           id:
             policy.resource === "patient" ||
             policy.resource === "emergency-profile"
-              ? patient?.id ?? resourceId
+              ? (patient?.id ?? resourceId)
               : resourceId,
           attributes: {
             owner_id:
               policy.resource === "notification"
-                ? notificationOwnerId ?? user.id
-                : patient?.userId ?? "",
+                ? (notificationOwnerId ?? user.id)
+                : (patient?.userId ?? ""),
             ...(patient ? { patient_id: patient.id } : {}),
             ...(documentType ? { document_type: documentType } : {}),
             ...(consentResource
               ? {
                   grantee_id: consentResource.granteeUserId,
                   status: consentResource.status,
-                  expires_at: consentResource.expiresAt.toISOString(),
+                  expires_at: consentResource.expiresAt.toISOString()
                 }
               : {}),
-            ...(requestGranteeId ? { grantee_id: requestGranteeId } : {}),
-          },
+            ...(requestGranteeId ? { grantee_id: requestGranteeId } : {})
+          }
         },
-        actions: [policy.action],
+        actions: [policy.action]
       });
 
       const isAllowed = decision.isAllowed(policy.action);
       if (!isAllowed) {
+        if (policy.resource === "emergency-profile") {
+          throw new ForbiddenException(EMERGENCY_PROFILE_UNAVAILABLE);
+        }
         throw new ForbiddenException(
           `Access denied: ${user.role} cannot perform '${policy.action}' on '${policy.resource}'`
         );

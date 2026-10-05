@@ -3,33 +3,42 @@ description: Patient-declared emergency profile boundaries
 
 principals:
   patient:
-    id: patient-user-a
+    id: 00000000-0000-4000-8000-000000000001
     roles: ["patient"]
   another_patient:
-    id: patient-user-b
+    id: 00000000-0000-4000-8000-000000000002
     roles: ["patient"]
   guardian:
-    id: guardian-user
+    id: 00000000-0000-4000-8000-000000000003
     roles: ["guardian"]
     attr:
-      guardian_ward_ids: ["child-user-a"]
+      guardian_ward_ids: ["00000000-0000-4000-8000-000000000004"]
   unrelated_guardian:
-    id: other-guardian
+    id: 00000000-0000-4000-8000-000000000005
     roles: ["guardian"]
     attr:
-      guardian_ward_ids: ["child-user-b"]
+      guardian_ward_ids: ["00000000-0000-4000-8000-000000000006"]
+  clinician:
+    id: 00000000-0000-4000-8000-000000000007
+    roles: ["clinician"]
+  platform_admin:
+    id: 00000000-0000-4000-8000-000000000008
+    roles: ["platform-admin"]
+  unauthenticated:
+    id: unauthenticated
+    roles: ["unauthenticated"]
 
 resources:
   own_profile:
     kind: emergency-profile
     id: patient-a
     attr:
-      owner_id: patient-user-a
+      owner_id: 00000000-0000-4000-8000-000000000001
   ward_profile:
     kind: emergency-profile
     id: child-a
     attr:
-      owner_id: child-user-a
+      owner_id: 00000000-0000-4000-8000-000000000004
 
 tests:
   - name: Patient can read and update their own emergency profile
@@ -62,6 +71,42 @@ tests:
           update: EFFECT_ALLOW
       - principal: unrelated_guardian
         resource: ward_profile
+        actions:
+          read: EFFECT_DENY
+          update: EFFECT_DENY
+
+  - name: Clinicians cannot read or update emergency profiles
+    input:
+      principals: [clinician]
+      resources: [own_profile]
+      actions: [read, update]
+    expected:
+      - principal: clinician
+        resource: own_profile
+        actions:
+          read: EFFECT_DENY
+          update: EFFECT_DENY
+
+  - name: Platform administrators cannot read or update emergency profiles
+    input:
+      principals: [platform_admin]
+      resources: [own_profile]
+      actions: [read, update]
+    expected:
+      - principal: platform_admin
+        resource: own_profile
+        actions:
+          read: EFFECT_DENY
+          update: EFFECT_DENY
+
+  - name: Unauthenticated principals cannot read or update emergency profiles
+    input:
+      principals: [unauthenticated]
+      resources: [own_profile]
+      actions: [read, update]
+    expected:
+      - principal: unauthenticated
+        resource: own_profile
         actions:
           read: EFFECT_DENY
           update: EFFECT_DENY

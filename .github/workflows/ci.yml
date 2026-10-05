@@ -115,7 +115,7 @@ jobs:
           done
 
       - name: Start integration service containers
-        run: docker compose up --wait -d postgres redis minio clamav mailpit keycloak
+        run: docker compose up --wait -d postgres redis minio clamav mailpit keycloak cerbos
 
       - name: Apply database migrations and seed fake user
         run: pnpm db:setup
