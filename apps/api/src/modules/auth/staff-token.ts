@@ -1,17 +1,24 @@
-import {
-  jwtVerify,
-  type JWTVerifyGetKey,
-  type JWTPayload,
-} from "jose";
+import { jwtVerify, type JWTVerifyGetKey, type JWTPayload } from "jose";
 
 const CLOCK_TOLERANCE_SECONDS = 5;
 const ACCEPTED_MFA_METHODS = new Set(["otp", "webauthn"]);
+
+export function hasAcceptedStaffMfaEvidence(payload: JWTPayload): boolean {
+  const authenticationMethods = payload["amr"];
+  return (
+    Array.isArray(authenticationMethods) &&
+    authenticationMethods.some(
+      (method) =>
+        typeof method === "string" && ACCEPTED_MFA_METHODS.has(method),
+    )
+  );
+}
 
 export async function verifyStaffAccessToken(
   token: string,
   getKey: JWTVerifyGetKey,
   issuer: string,
-  clientId: string
+  clientId: string,
 ): Promise<JWTPayload> {
   const { payload } = await jwtVerify(token, getKey, {
     algorithms: ["RS256"],
@@ -31,14 +38,7 @@ export async function verifyStaffAccessToken(
     throw new Error("Staff access token audience is invalid");
   }
 
-  const authenticationMethods = payload.amr;
-  if (
-    !Array.isArray(authenticationMethods) ||
-    !authenticationMethods.some(
-      (method) =>
-        typeof method === "string" && ACCEPTED_MFA_METHODS.has(method)
-    )
-  ) {
+  if (!hasAcceptedStaffMfaEvidence(payload)) {
     throw new Error("Staff access token does not prove an accepted MFA method");
   }
 

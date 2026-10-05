@@ -26,7 +26,10 @@ import { env } from "../../../config/env.js";
 import { db } from "../../../database/index.js";
 import { clinicians, sessions, users } from "../../../database/schema.js";
 import { and, eq, gt, isNull } from "drizzle-orm";
-import { verifyStaffAccessToken } from "../staff-token.js";
+import {
+  hasAcceptedStaffMfaEvidence,
+  verifyStaffAccessToken,
+} from "../staff-token.js";
 import { createHash } from "crypto";
 
 const ACCESS_COOKIE = "__Host-mediqr-access";
@@ -40,7 +43,7 @@ const STAFF_ROLES = new Set([
 const KEYCLOAK_ISSUER = `${env.KEYCLOAK_BASE_URL.replace(/\/+$/, "")}/realms/${encodeURIComponent(env.KEYCLOAK_REALM)}`;
 const STAFF_JWKS = createRemoteJWKSet(
   new URL(`${KEYCLOAK_ISSUER}/protocol/openid-connect/certs`),
-  { cacheMaxAge: 10 * 60 * 1000, cooldownDuration: 30 * 1000 }
+  { cacheMaxAge: 10 * 60 * 1000, cooldownDuration: 30 * 1000 },
 );
 
 @Injectable()
@@ -48,15 +51,16 @@ export class JwtAuthGuard implements CanActivate {
   constructor(@Inject(Reflector) private readonly reflector: Reflector) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
-    const isPublic = this.reflector.getAllAndOverride<boolean>(PUBLIC_ROUTE_KEY, [
-      ctx.getHandler(),
-      ctx.getClass(),
-    ]);
+    const isPublic = this.reflector.getAllAndOverride<boolean>(
+      PUBLIC_ROUTE_KEY,
+      [ctx.getHandler(), ctx.getClass()],
+    );
     if (isPublic) return true;
 
     const request = ctx.switchToHttp().getRequest<FastifyRequest>();
-    const token =
-      (request.cookies as Record<string, string | undefined>)[ACCESS_COOKIE];
+    const token = (request.cookies as Record<string, string | undefined>)[
+      ACCESS_COOKIE
+    ];
 
     if (!token) {
       throw new UnauthorizedException("Missing authentication cookie");
@@ -72,7 +76,7 @@ export class JwtAuthGuard implements CanActivate {
                 token,
                 STAFF_JWKS,
                 KEYCLOAK_ISSUER,
-                env.KEYCLOAK_CLIENT_ID
+                env.KEYCLOAK_CLIENT_ID,
               )
             : null;
 
@@ -92,20 +96,28 @@ export class JwtAuthGuard implements CanActivate {
   }
 
   private async verifyPatientToken(token: string): Promise<JWTPayload> {
-    const { payload } = await jwtVerify(token, Buffer.from(env.SESSION_SECRET), {
-      algorithms: ["HS256"],
-      issuer: "mediqr-api",
-      audience: "mediqr-api",
-      clockTolerance: 5,
-    });
+    const { payload } = await jwtVerify(
+      token,
+      Buffer.from(env.SESSION_SECRET),
+      {
+        algorithms: ["HS256"],
+        issuer: "mediqr-api",
+        audience: "mediqr-api",
+        clockTolerance: 5,
+      },
+    );
     return payload;
   }
 
-  private async resolvePatient(payload: JWTPayload): Promise<AuthenticatedUser> {
+  private async resolvePatient(
+    payload: JWTPayload,
+  ): Promise<AuthenticatedUser> {
     const userId = payload["mediqr_user_id"];
     const accessTokenId = payload.jti;
     if (typeof userId !== "string" || typeof accessTokenId !== "string") {
-      throw new UnauthorizedException("Patient token has no active session identity");
+      throw new UnauthorizedException(
+        "Patient token has no active session identity",
+      );
     }
     const accessTokenIdHash = createHash("sha256")
       .update(accessTokenId)
@@ -119,18 +131,23 @@ export class JwtAuthGuard implements CanActivate {
           eq(sessions.accessTokenIdHash, accessTokenIdHash),
           eq(sessions.userId, userId),
           isNull(sessions.revokedAt),
-          gt(sessions.expiresAt, now)
-        )
+          gt(sessions.expiresAt, now),
+        ),
       )
       .returning({ id: sessions.id });
-    if (!session) throw new UnauthorizedException("Patient session is revoked or expired");
+    if (!session)
+      throw new UnauthorizedException("Patient session is revoked or expired");
 
     const [user] = await db
       .select()
       .from(users)
       .where(eq(users.id, userId))
       .limit(1);
-    if (!user || user.status !== "active" || user.role !== "patient" && user.role !== "guardian") {
+    if (
+      !user ||
+      user.status !== "active" ||
+      (user.role !== "patient" && user.role !== "guardian")
+    ) {
       throw new UnauthorizedException("Patient account is not active");
     }
 
@@ -171,6 +188,7 @@ export class JwtAuthGuard implements CanActivate {
       sub: payload.sub,
       role: user.role,
       isVerified,
+      isMfaVerified: hasAcceptedStaffMfaEvidence(payload),
       facilityId: user.facilityId ?? undefined,
     };
   }

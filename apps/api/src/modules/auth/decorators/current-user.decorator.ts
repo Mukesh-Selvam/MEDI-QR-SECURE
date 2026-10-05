@@ -12,6 +12,8 @@ export interface AuthenticatedUser {
   role: string;
   /** Only set for clinicians after DB lookup */
   isVerified?: boolean;
+  /** MFA evidence extracted from a validated Keycloak staff access token */
+  isMfaVerified?: boolean;
   /** Guardianship ward IDs loaded from DB for guardians */
   guardianWardIds?: string[];
   /** Facility ID for facility-admin / pharmacy-staff */
@@ -26,5 +28,5 @@ export const CurrentUser = createParamDecorator(
     return (request as unknown as Record<string, unknown>)[
       "user"
     ] as AuthenticatedUser;
-  }
+  },
 );

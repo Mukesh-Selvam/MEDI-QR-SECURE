@@ -20,6 +20,18 @@ principals:
     attr:
       is_mfa_verified: true
       facility_ids: ["00000000-0000-4000-8000-000000000052"]
+  facility_admin_without_mfa:
+    id: 00000000-0000-4000-8000-000000000044
+    roles: ["facility-admin"]
+    attr:
+      is_mfa_verified: false
+      facility_ids: ["00000000-0000-4000-8000-000000000051"]
+  platform_admin_without_mfa:
+    id: 00000000-0000-4000-8000-000000000045
+    roles: ["platform-admin"]
+    attr:
+      is_mfa_verified: false
+      facility_ids: []
   unauthenticated:
     id: unauthenticated
     roles: ["unauthenticated"]
@@ -169,6 +181,42 @@ tests:
         actions:
           create-facility-admin: EFFECT_ALLOW
 
+  - name: Facility affiliation and verification mutations deny without MFA evidence
+    input:
+      principals: [facility_admin_without_mfa, platform_admin_without_mfa]
+      resources:
+        - facility_admin_creation
+        - staff_creation_ed
+        - pending_staff
+        - own_affiliation
+      actions:
+        - create-facility-admin
+        - create-staff
+        - activate-staff
+        - suspend
+        - revoke
+    expected:
+      - principal: platform_admin_without_mfa
+        resource: facility_admin_creation
+        actions:
+          create-facility-admin: EFFECT_DENY
+      - principal: facility_admin_without_mfa
+        resource: staff_creation_ed
+        actions:
+          create-staff: EFFECT_DENY
+      - principal: facility_admin_without_mfa
+        resource: pending_staff
+        actions:
+          activate-staff: EFFECT_DENY
+          suspend: EFFECT_DENY
+          revoke: EFFECT_DENY
+      - principal: platform_admin_without_mfa
+        resource: pending_staff
+        actions:
+          activate-staff: EFFECT_DENY
+          suspend: EFFECT_DENY
+          revoke: EFFECT_DENY
+
   - name: Facility administrator can create matching ED staff affiliation
     input:
       principals: [facility_admin_ed]
@@ -291,7 +339,8 @@ tests:
     input:
       principals: [unauthenticated]
       resources: [staff_creation_ed]
-      actions: [create-staff, create-facility-admin, activate-staff, suspend, revoke]
+      actions:
+        [create-staff, create-facility-admin, activate-staff, suspend, revoke]
     expected:
       - principal: unauthenticated
         resource: staff_creation_ed

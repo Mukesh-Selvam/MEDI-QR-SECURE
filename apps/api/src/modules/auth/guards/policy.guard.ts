@@ -51,13 +51,6 @@ import {
 
 type ResolvedPatient = PatientOwner;
 const EMERGENCY_PROFILE_UNAVAILABLE = "Emergency profile unavailable.";
-const STAFF_ROLES = new Set([
-  "clinician",
-  "emergency-department-staff",
-  "facility-admin",
-  "pharmacy-staff",
-  "platform-admin",
-]);
 type EmergencyStaffRole = "emergency-department-staff" | "pharmacy-staff";
 
 function isEmergencyStaffRole(role: string): role is EmergencyStaffRole {
@@ -546,7 +539,7 @@ export class PolicyGuard implements CanActivate {
           roles: [user.role],
           attributes: {
             is_verified: user.isVerified ?? false,
-            is_mfa_verified: STAFF_ROLES.has(user.role),
+            is_mfa_verified: user.isMfaVerified ?? false,
             has_access_grant: hasConsentGrant,
             has_consent_grant: hasConsentGrant,
             has_scope: hasConsentGrant,

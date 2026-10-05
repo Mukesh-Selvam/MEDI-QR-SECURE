@@ -280,6 +280,36 @@ describe("PolicyGuard patient and guardian ownership resolution", () => {
     );
   });
 
+  it("passes validated MFA evidence through instead of inferring it from role", async () => {
+    const staffWithoutMfa: AuthenticatedUser = {
+      id: "staff-user",
+      sub: "staff-sub",
+      role: "emergency-department-staff",
+      isMfaVerified: false,
+    };
+    mocks.queryResults = [[]];
+    mocks.checkResource.mockResolvedValue({ isAllowed: () => true });
+
+    await expect(
+      guard.canActivate(
+        createContext(
+          reflector,
+          staffWithoutMfa,
+          {},
+          "emergency-access",
+          "request",
+        ),
+      ),
+    ).resolves.toBe(true);
+    expect(mocks.checkResource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        principal: expect.objectContaining({
+          attributes: expect.objectContaining({ is_mfa_verified: false }),
+        }),
+      }),
+    );
+  });
+
   it("denies patient A access to patient B's document", async () => {
     mocks.queryResults = [
       [{ patientId: "patient-b" }],

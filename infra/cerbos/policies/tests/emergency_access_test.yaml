@@ -29,6 +29,15 @@ principals:
       staff_status: active
       provider_type: hospital-emergency-department
       facility_id: 00000000-0000-4000-8000-000000000021
+  pharmacy_staff_without_mfa:
+    id: 00000000-0000-4000-8000-000000000023
+    roles: ["pharmacy-staff"]
+    attr:
+      is_mfa_verified: false
+      facility_status: verified
+      staff_status: active
+      provider_type: pharmacy
+      facility_id: 00000000-0000-4000-8000-000000000022
   unverified_pharmacy_staff:
     id: 00000000-0000-4000-8000-000000000014
     roles: ["pharmacy-staff"]
@@ -48,6 +57,12 @@ principals:
     roles: ["platform-admin"]
     attr:
       is_mfa_verified: true
+      facility_ids: []
+  platform_admin_without_mfa:
+    id: 00000000-0000-4000-8000-000000000024
+    roles: ["platform-admin"]
+    attr:
+      is_mfa_verified: false
       facility_ids: []
   platform_admin_of_facility:
     id: 00000000-0000-4000-8000-000000000017
@@ -239,16 +254,58 @@ tests:
         actions:
           read-summary: EFFECT_ALLOW
 
-  - name: Emergency access denies without MFA or verified facility
+  - name: Emergency access denies without MFA evidence for all provider operations
     input:
-      principals: [ed_staff_without_mfa]
-      resources: [ed_request]
-      actions: [request]
+      principals: [ed_staff_without_mfa, pharmacy_staff_without_mfa]
+      resources: [ed_request, ed_grant, pharmacy_request, pharmacy_grant]
+      actions: [request, read-summary]
     expected:
       - principal: ed_staff_without_mfa
         resource: ed_request
         actions:
           request: EFFECT_DENY
+      - principal: ed_staff_without_mfa
+        resource: ed_grant
+        actions:
+          read-summary: EFFECT_DENY
+      - principal: pharmacy_staff_without_mfa
+        resource: pharmacy_request
+        actions:
+          request: EFFECT_DENY
+      - principal: pharmacy_staff_without_mfa
+        resource: pharmacy_grant
+        actions:
+          read-summary: EFFECT_DENY
+
+  - name: Platform emergency-access actions require MFA evidence
+    input:
+      principals: [platform_admin_without_mfa]
+      resources: [verification, review_other_facility, review_own_request]
+      actions:
+        - register-facility
+        - verify
+        - reject
+        - revoke-verification
+        - review
+        - escalate-review
+    expected:
+      - principal: platform_admin_without_mfa
+        resource: verification
+        actions:
+          register-facility: EFFECT_DENY
+          verify: EFFECT_DENY
+          reject: EFFECT_DENY
+          revoke-verification: EFFECT_DENY
+      - principal: platform_admin_without_mfa
+        resource: review_other_facility
+        actions:
+          review: EFFECT_DENY
+          escalate-review: EFFECT_DENY
+      - principal: platform_admin_without_mfa
+        resource: review_own_request
+        actions:
+          review: EFFECT_DENY
+          escalate-review: EFFECT_DENY
 
   - name: Pending pharmacy verification is denied
     input:

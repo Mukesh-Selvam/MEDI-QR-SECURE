@@ -82,6 +82,7 @@ resourcePolicy:
         match:
           all:
             of:
+              - expr: request.principal.attr.is_mfa_verified == true
               - expr: request.resource.attr.requester_id != request.principal.id
               - expr: "!request.principal.attr.facility_ids.exists(facilityId, facilityId == request.resource.attr.facility_id)"
 
@@ -92,6 +93,7 @@ resourcePolicy:
         match:
           all:
             of:
+              - expr: request.principal.attr.is_mfa_verified == true
               - expr: request.resource.attr.reviewer_id != request.principal.id
               - expr: request.resource.attr.requester_id != request.principal.id
               - expr: "!request.principal.attr.facility_ids.exists(facilityId, facilityId == request.resource.attr.facility_id)"

@@ -22,7 +22,7 @@ describe("staff access token validation", () => {
     });
 
     await expect(
-      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID)
+      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID),
     ).resolves.toMatchObject({ sub: "keycloak-user", azp: CLIENT_ID });
   });
 
@@ -37,7 +37,7 @@ describe("staff access token validation", () => {
     parts[1] = `${payloadSegment.startsWith("A") ? "B" : "A"}${payloadSegment.slice(1)}`;
 
     await expect(
-      verifyStaffAccessToken(parts.join("."), getKey, ISSUER, CLIENT_ID)
+      verifyStaffAccessToken(parts.join("."), getKey, ISSUER, CLIENT_ID),
     ).rejects.toThrow();
   });
 
@@ -49,7 +49,7 @@ describe("staff access token validation", () => {
     });
 
     await expect(
-      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID)
+      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID),
     ).rejects.toThrow();
   });
 
@@ -61,7 +61,7 @@ describe("staff access token validation", () => {
     });
 
     await expect(
-      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID)
+      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID),
     ).rejects.toThrow();
   });
 
@@ -75,7 +75,7 @@ describe("staff access token validation", () => {
     });
 
     await expect(
-      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID)
+      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID),
     ).rejects.toThrow(/audience/i);
   });
 
@@ -87,7 +87,7 @@ describe("staff access token validation", () => {
     });
 
     await expect(
-      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID)
+      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID),
     ).rejects.toThrow(/MFA method/i);
   });
 
@@ -100,8 +100,25 @@ describe("staff access token validation", () => {
     });
 
     await expect(
-      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID)
+      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID),
     ).rejects.toThrow(/MFA method/i);
+  });
+
+  it("preserves the validated MFA claim for policy context", async () => {
+    const { token, getKey } = await createSignedToken({
+      issuer: ISSUER,
+      azp: CLIENT_ID,
+      authenticationMethods: ["pwd", "webauthn"],
+      expiration: "5m",
+    });
+    const payload = await verifyStaffAccessToken(
+      token,
+      getKey,
+      ISSUER,
+      CLIENT_ID,
+    );
+
+    expect(payload.amr).toEqual(["pwd", "webauthn"]);
   });
 
   it.each(["otp", "webauthn"])("accepts the %s MFA method", async (method) => {
@@ -113,7 +130,7 @@ describe("staff access token validation", () => {
     });
 
     await expect(
-      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID)
+      verifyStaffAccessToken(token, getKey, ISSUER, CLIENT_ID),
     ).resolves.toMatchObject({ amr: ["pwd", method] });
   });
 });
@@ -136,7 +153,8 @@ async function createSignedToken(options: {
 
   const claims: Record<string, unknown> = {};
   if (options.azp) claims["azp"] = options.azp;
-  if (options.authenticationMethods) claims["amr"] = options.authenticationMethods;
+  if (options.authenticationMethods)
+    claims["amr"] = options.authenticationMethods;
   let builder = new SignJWT(claims)
     .setProtectedHeader({ alg: "RS256", kid: "test-key" })
     .setIssuer(options.issuer)
