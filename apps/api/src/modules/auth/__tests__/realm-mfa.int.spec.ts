@@ -289,6 +289,7 @@ describe("Keycloak staff MFA (integration)", () => {
     expect(names).toEqual(
       expect.arrayContaining([
         "clinician",
+        "emergency-department-staff",
         "facility-admin",
         "pharmacy-staff",
         "platform-admin",

@@ -32,6 +32,7 @@ import { createHash } from "crypto";
 const ACCESS_COOKIE = "__Host-mediqr-access";
 const STAFF_ROLES = new Set([
   "clinician",
+  "emergency-department-staff",
   "facility-admin",
   "pharmacy-staff",
   "platform-admin",

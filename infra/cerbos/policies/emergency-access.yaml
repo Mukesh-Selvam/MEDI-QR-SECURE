@@ -1,0 +1,99 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: emergency-access
+  version: default
+  rules:
+    - actions: ["request"]
+      roles: ["emergency-department-staff"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.principal.attr.is_mfa_verified == true
+              - expr: request.principal.attr.facility_status == "verified"
+              - expr: request.principal.attr.staff_status == "active"
+              - expr: request.principal.attr.provider_type == "hospital-emergency-department"
+              - expr: request.resource.attr.facility_id == request.principal.attr.facility_id
+              - expr: request.resource.attr.provider_type == "hospital-emergency-department"
+              - expr: request.resource.attr.profile_enabled == true
+
+    - actions: ["request"]
+      roles: ["pharmacy-staff"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.principal.attr.is_mfa_verified == true
+              - expr: request.principal.attr.facility_status == "verified"
+              - expr: request.principal.attr.staff_status == "active"
+              - expr: request.principal.attr.provider_type == "pharmacy"
+              - expr: request.resource.attr.facility_id == request.principal.attr.facility_id
+              - expr: request.resource.attr.provider_type == "pharmacy"
+              - expr: request.resource.attr.profile_enabled == true
+
+    - actions: ["read-hospital-summary"]
+      roles: ["emergency-department-staff"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.principal.attr.is_mfa_verified == true
+              - expr: request.principal.attr.facility_status == "verified"
+              - expr: request.principal.attr.staff_status == "active"
+              - expr: request.principal.attr.provider_type == "hospital-emergency-department"
+              - expr: request.resource.attr.provider_type == "hospital-emergency-department"
+              - expr: request.resource.attr.owner_id == request.resource.attr.grant_owner_id
+              - expr: request.resource.attr.grantee_id == request.principal.id
+              - expr: request.resource.attr.facility_id == request.principal.attr.facility_id
+              - expr: request.resource.attr.profile_enabled == true
+              - expr: request.resource.attr.grant_active == true
+
+    - actions: ["read-allergies"]
+      roles: ["pharmacy-staff"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.principal.attr.is_mfa_verified == true
+              - expr: request.principal.attr.facility_status == "verified"
+              - expr: request.principal.attr.staff_status == "active"
+              - expr: request.principal.attr.provider_type == "pharmacy"
+              - expr: request.resource.attr.provider_type == "pharmacy"
+              - expr: request.resource.attr.owner_id == request.resource.attr.grant_owner_id
+              - expr: request.resource.attr.grantee_id == request.principal.id
+              - expr: request.resource.attr.facility_id == request.principal.attr.facility_id
+              - expr: request.resource.attr.profile_enabled == true
+              - expr: request.resource.attr.grant_active == true
+
+    - actions: ["review"]
+      roles: ["platform-admin"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.resource.attr.requester_id != request.principal.id
+              - expr: "!request.principal.attr.facility_ids.exists(facilityId, facilityId == request.resource.attr.facility_id)"
+
+    - actions: ["escalate-review"]
+      roles: ["platform-admin"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.resource.attr.reviewer_id != request.principal.id
+              - expr: request.resource.attr.requester_id != request.principal.id
+              - expr: "!request.principal.attr.facility_ids.exists(facilityId, facilityId == request.resource.attr.facility_id)"
+
+    - actions: ["verify", "reject", "revoke-verification"]
+      roles: ["platform-admin"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: "!request.principal.attr.facility_ids.exists(facilityId, facilityId == request.resource.attr.facility_id)"

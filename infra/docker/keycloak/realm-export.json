@@ -28,6 +28,7 @@
       { "name": "patient", "composite": false, "clientRole": false },
       { "name": "guardian", "composite": false, "clientRole": false },
       { "name": "clinician", "composite": false, "clientRole": false },
+      { "name": "emergency-department-staff", "composite": false, "clientRole": false },
       { "name": "facility-admin", "composite": false, "clientRole": false },
       { "name": "pharmacy-staff", "composite": false, "clientRole": false },
       { "name": "platform-admin", "composite": false, "clientRole": false }

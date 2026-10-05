@@ -21,3 +21,16 @@
 2. **At Rest**: AES-256-GCM envelope encryption with KMS-managed Key Encryption Keys ($KEK$).
 3. **Data Identifiers**: Field-level encryption for direct patient identifiers.
 4. **Secrets Management**: Zero plain text secrets in repo, docker files, or environment templates.
+
+## 3. Phase 5 Break-Glass Threats and Planned Controls
+
+Break-glass is not available until the Phase 5 implementation and release gates are complete. The following controls are required before enabling it:
+
+| Threat | Planned control |
+| --- | --- |
+| Stolen staff account | Require Keycloak MFA for staff tokens, verify current facility affiliation and provider status on every request, bind grants to one staff member and facility, apply short fixed expiry, and support immediate account/facility suspension and grant revocation. |
+| Insider snooping | Restrict summaries by provider type, require a new finite reason code for each request, audit before returning data, notify the patient and guardian generically, limit request rates, and require independent review within 24 hours. Reviewers cannot review their own request or facility; overdue reviews escalate to a second platform administrator. |
+| Fake provider registration | Verify facility registration against authoritative evidence, permit only platform administrators to change verification status, prevent facility administrators from verifying their own facility, and require active staff-to-facility affiliation. |
+| Denial of service against a patient | Apply patient rate limits only to denied or unverified attempts, not successful grants. Rate-limit by provider as well, monitor repeated and multi-patient patterns, and suspend abusive providers rather than blocking a patient from emergency access. |
+
+Emergency summaries remain a display of patient-declared profile fields and explicitly emergency-visible document metadata only. They must not contain extracted, interpreted, inferred, or alert-generating clinical information. No free-text reason or review note is collected.

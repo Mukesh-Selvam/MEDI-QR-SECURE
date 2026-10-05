@@ -11,6 +11,7 @@
 
 import {
   pgTable,
+  check,
   uuid,
   varchar,
   text,
@@ -32,6 +33,7 @@ export const userRoleEnum = pgEnum("user_role", [
   "patient",
   "guardian",
   "clinician",
+  "emergency-department-staff",
   "facility-admin",
   "pharmacy-staff",
   "platform-admin",
@@ -42,6 +44,41 @@ export const userStatusEnum = pgEnum("user_status", [
   "suspended",
   "pending_verification",
 ]);
+
+export const facilityTypeEnum = pgEnum("facility_type", [
+  "hospital-emergency-department",
+  "pharmacy",
+]);
+
+export const facilityVerificationStatusEnum = pgEnum(
+  "facility_verification_status",
+  ["pending", "verified", "rejected", "suspended", "revoked"]
+);
+
+export const facilityStaffStatusEnum = pgEnum("facility_staff_status", [
+  "active",
+  "suspended",
+  "revoked",
+]);
+
+export const emergencyReasonCodeEnum = pgEnum("emergency_reason_code", [
+  "PATIENT_UNABLE_TO_CONSENT",
+  "GUARDIAN_UNAVAILABLE",
+  "TIME_CRITICAL_EMERGENCY_CARE",
+  "OTHER_EMERGENCY_CIRCUMSTANCE",
+]);
+
+export const emergencyRequestStatusEnum = pgEnum("emergency_request_status", [
+  "granted",
+  "denied",
+  "revoked",
+  "expired",
+]);
+
+export const emergencyReviewOutcomeEnum = pgEnum(
+  "emergency_review_outcome",
+  ["appropriate", "inappropriate", "referred"]
+);
 
 export const guardianshipRelationshipEnum = pgEnum("guardianship_relationship", [
   "mother",
@@ -141,6 +178,160 @@ export const users = pgTable(
   (table) => [
     uniqueIndex("users_keycloak_id_idx").on(table.keycloakId),
     index("users_role_idx").on(table.role),
+  ]
+);
+
+export const facilities = pgTable(
+  "facilities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    facilityType: facilityTypeEnum("facility_type").notNull(),
+    displayName: varchar("display_name", { length: 255 }).notNull(),
+    registrationNumber: varchar("registration_number", { length: 128 }).notNull(),
+    registrationJurisdiction: varchar("registration_jurisdiction", {
+      length: 128,
+    }).notNull(),
+    verificationStatus: facilityVerificationStatusEnum("verification_status")
+      .notNull()
+      .default("pending"),
+    verifiedByUserId: uuid("verified_by_user_id").references(() => users.id, {
+      onDelete: "restrict",
+    }),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("facilities_registration_idx").on(
+      table.registrationJurisdiction,
+      table.registrationNumber
+    ),
+    index("facilities_verification_status_idx").on(table.verificationStatus),
+  ]
+);
+
+export const facilityStaffAffiliations = pgTable(
+  "facility_staff_affiliations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    facilityId: uuid("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: userRoleEnum("role").notNull(),
+    status: facilityStaffStatusEnum("status").notNull().default("active"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("facility_staff_affiliations_facility_user_idx").on(
+      table.facilityId,
+      table.userId
+    ),
+    index("facility_staff_affiliations_user_status_idx").on(
+      table.userId,
+      table.status
+    ),
+    check(
+      "facility_staff_affiliations_role_check",
+      sql`${table.role}::text in ('emergency-department-staff', 'pharmacy-staff', 'facility-admin')`
+    ),
+  ]
+);
+
+export const emergencyAccessRequests = pgTable(
+  "emergency_access_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "cascade" }),
+    requesterUserId: uuid("requester_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    facilityId: uuid("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "restrict" }),
+    providerType: facilityTypeEnum("provider_type").notNull(),
+    reasonCode: emergencyReasonCodeEnum("reason_code").notNull(),
+    status: emergencyRequestStatusEnum("status").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    grantedAt: timestamp("granted_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    notificationChannelMissing: boolean("notification_channel_missing")
+      .notNull()
+      .default(false),
+    priorityReview: boolean("priority_review").notNull().default(false),
+  },
+  (table) => [
+    index("emergency_access_requests_patient_created_idx").on(
+      table.patientId,
+      table.createdAt
+    ),
+    index("emergency_access_requests_provider_created_idx").on(
+      table.requesterUserId,
+      table.createdAt
+    ),
+    index("emergency_access_requests_facility_created_idx").on(
+      table.facilityId,
+      table.createdAt
+    ),
+    index("emergency_access_requests_expiry_idx")
+      .on(table.expiresAt)
+      .where(sql`${table.status} = 'granted'`),
+    check(
+      "emergency_access_requests_fixed_ttl_check",
+      sql`${table.status} <> 'granted' or (${table.grantedAt} is not null and ${table.expiresAt} = ${table.grantedAt} + interval '30 minutes')`
+    ),
+  ]
+);
+
+export const emergencyAccessReviews = pgTable(
+  "emergency_access_reviews",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    requestId: uuid("request_id")
+      .notNull()
+      .unique()
+      .references(() => emergencyAccessRequests.id, { onDelete: "cascade" }),
+    reviewDueAt: timestamp("review_due_at", { withTimezone: true }).notNull(),
+    reviewerUserId: uuid("reviewer_user_id").references(() => users.id, {
+      onDelete: "restrict",
+    }),
+    outcome: emergencyReviewOutcomeEnum("outcome"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    escalatedToUserId: uuid("escalated_to_user_id").references(() => users.id, {
+      onDelete: "restrict",
+    }),
+    escalatedAt: timestamp("escalated_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("emergency_access_reviews_due_idx").on(
+      table.reviewDueAt,
+      table.reviewedAt
+    ),
+    index("emergency_access_reviews_reviewer_idx").on(table.reviewerUserId),
+    check(
+      "emergency_access_reviews_decision_state_check",
+      sql`(${table.reviewerUserId} is null and ${table.outcome} is null and ${table.reviewedAt} is null) or (${table.reviewerUserId} is not null and ${table.outcome} is not null and ${table.reviewedAt} is not null)`
+    ),
+    check(
+      "emergency_access_reviews_escalation_state_check",
+      sql`(${table.escalatedToUserId} is null and ${table.escalatedAt} is null) or (${table.escalatedToUserId} is not null and ${table.escalatedAt} is not null and ${table.escalatedToUserId} is distinct from ${table.reviewerUserId})`
+    ),
   ]
 );
 
@@ -363,6 +554,7 @@ export const documents = pgTable(
     documentDate: timestamp("document_date", { withTimezone: true }),
     /** Facility that uploaded (nullable for patient-uploaded) */
     facilityId: uuid("facility_id"),
+    emergencyVisible: boolean("emergency_visible").notNull().default(false),
     /** Notes stripped of PII — opaque references only */
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -376,6 +568,11 @@ export const documents = pgTable(
     index("documents_type_idx").on(table.documentType),
     index("documents_document_date_idx").on(table.documentDate),
     index("documents_scan_status_idx").on(table.scanStatus),
+    index("documents_emergency_visible_idx")
+      .on(table.patientId, table.documentDate)
+      .where(
+        sql`${table.emergencyVisible} = true and ${table.documentType} = 'prescription' and ${table.status} = 'ready'`
+      ),
   ]
 );
 
@@ -605,6 +802,20 @@ export type AccessRequest = typeof accessRequests.$inferSelect;
 export type NewAccessRequest = typeof accessRequests.$inferInsert;
 export type Consent = typeof consents.$inferSelect;
 export type NewConsent = typeof consents.$inferInsert;
+export type Facility = typeof facilities.$inferSelect;
+export type NewFacility = typeof facilities.$inferInsert;
+export type FacilityStaffAffiliation =
+  typeof facilityStaffAffiliations.$inferSelect;
+export type NewFacilityStaffAffiliation =
+  typeof facilityStaffAffiliations.$inferInsert;
+export type EmergencyAccessRequest =
+  typeof emergencyAccessRequests.$inferSelect;
+export type NewEmergencyAccessRequest =
+  typeof emergencyAccessRequests.$inferInsert;
+export type EmergencyAccessReview =
+  typeof emergencyAccessReviews.$inferSelect;
+export type NewEmergencyAccessReview =
+  typeof emergencyAccessReviews.$inferInsert;
 
 // Vault types
 export type Document = typeof documents.$inferSelect;

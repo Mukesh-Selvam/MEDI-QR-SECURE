@@ -1,0 +1,20 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: emergency-document
+  version: default
+  rules:
+    - actions: ["update-emergency-visibility"]
+      roles: ["patient"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: request.resource.attr.owner_id == request.principal.id
+
+    - actions: ["update-emergency-visibility"]
+      roles: ["guardian"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: >
+            request.principal.attr.guardian_ward_ids.exists(wardId, wardId == request.resource.attr.owner_id)

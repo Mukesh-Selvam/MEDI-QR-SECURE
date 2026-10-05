@@ -1,0 +1,421 @@
+name: EmergencyAccessTestSuite
+description: Phase 5 emergency-access role, scope, MFA, and separation boundaries
+
+principals:
+  emergency_department_staff:
+    id: 00000000-0000-4000-8000-000000000011
+    roles: ["emergency-department-staff"]
+    attr:
+      is_mfa_verified: true
+      facility_status: verified
+      staff_status: active
+      provider_type: hospital-emergency-department
+      facility_id: 00000000-0000-4000-8000-000000000021
+  pharmacy_staff:
+    id: 00000000-0000-4000-8000-000000000012
+    roles: ["pharmacy-staff"]
+    attr:
+      is_mfa_verified: true
+      facility_status: verified
+      staff_status: active
+      provider_type: pharmacy
+      facility_id: 00000000-0000-4000-8000-000000000022
+  ed_staff_without_mfa:
+    id: 00000000-0000-4000-8000-000000000013
+    roles: ["emergency-department-staff"]
+    attr:
+      is_mfa_verified: false
+      facility_status: verified
+      staff_status: active
+      provider_type: hospital-emergency-department
+      facility_id: 00000000-0000-4000-8000-000000000021
+  unverified_pharmacy_staff:
+    id: 00000000-0000-4000-8000-000000000014
+    roles: ["pharmacy-staff"]
+    attr:
+      is_mfa_verified: true
+      facility_status: pending
+      staff_status: active
+      provider_type: pharmacy
+      facility_id: 00000000-0000-4000-8000-000000000022
+  facility_admin:
+    id: 00000000-0000-4000-8000-000000000015
+    roles: ["facility-admin"]
+    attr:
+      facility_ids: ["00000000-0000-4000-8000-000000000021"]
+  platform_admin:
+    id: 00000000-0000-4000-8000-000000000016
+    roles: ["platform-admin"]
+    attr:
+      facility_ids: []
+  platform_admin_of_facility:
+    id: 00000000-0000-4000-8000-000000000017
+    roles: ["platform-admin"]
+    attr:
+      facility_ids: ["00000000-0000-4000-8000-000000000021"]
+  clinician:
+    id: 00000000-0000-4000-8000-000000000018
+    roles: ["clinician"]
+  patient:
+    id: 00000000-0000-4000-8000-000000000031
+    roles: ["patient"]
+  another_patient:
+    id: 00000000-0000-4000-8000-000000000034
+    roles: ["patient"]
+  guardian:
+    id: 00000000-0000-4000-8000-000000000032
+    roles: ["guardian"]
+    attr:
+      guardian_ward_ids: ["00000000-0000-4000-8000-000000000031"]
+  unrelated_guardian:
+    id: 00000000-0000-4000-8000-000000000033
+    roles: ["guardian"]
+    attr:
+      guardian_ward_ids: []
+  unauthenticated:
+    id: unauthenticated
+    roles: ["unauthenticated"]
+
+resources:
+  ed_request:
+    kind: emergency-access
+    id: request-ed
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000021
+      provider_type: hospital-emergency-department
+      profile_enabled: true
+  pharmacy_request:
+    kind: emergency-access
+    id: request-pharmacy
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000022
+      provider_type: pharmacy
+      profile_enabled: true
+  disabled_profile_request:
+    kind: emergency-access
+    id: request-disabled
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000021
+      provider_type: hospital-emergency-department
+      profile_enabled: false
+  ed_grant:
+    kind: emergency-access
+    id: grant-ed
+    attr:
+      owner_id: 00000000-0000-4000-8000-000000000031
+      grant_owner_id: 00000000-0000-4000-8000-000000000031
+      grantee_id: 00000000-0000-4000-8000-000000000011
+      facility_id: 00000000-0000-4000-8000-000000000021
+      provider_type: hospital-emergency-department
+      profile_enabled: true
+      grant_active: true
+  pharmacy_grant:
+    kind: emergency-access
+    id: grant-pharmacy
+    attr:
+      owner_id: 00000000-0000-4000-8000-000000000031
+      grant_owner_id: 00000000-0000-4000-8000-000000000031
+      grantee_id: 00000000-0000-4000-8000-000000000012
+      facility_id: 00000000-0000-4000-8000-000000000022
+      provider_type: pharmacy
+      profile_enabled: true
+      grant_active: true
+  wrong_owner_grant:
+    kind: emergency-access
+    id: grant-wrong-owner
+    attr:
+      owner_id: 00000000-0000-4000-8000-000000000031
+      grant_owner_id: 00000000-0000-4000-8000-000000000034
+      grantee_id: 00000000-0000-4000-8000-000000000011
+      facility_id: 00000000-0000-4000-8000-000000000021
+      provider_type: hospital-emergency-department
+      profile_enabled: true
+      grant_active: true
+  review_other_facility:
+    kind: emergency-access
+    id: review-other-facility
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000021
+      reviewer_id: 00000000-0000-4000-8000-000000000019
+      requester_id: 00000000-0000-4000-8000-000000000011
+  review_own_request:
+    kind: emergency-access
+    id: review-own-request
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000022
+      reviewer_id: 00000000-0000-4000-8000-000000000019
+      requester_id: 00000000-0000-4000-8000-000000000016
+  verification:
+    kind: emergency-access
+    id: facility-verification
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000021
+  own_document:
+    kind: emergency-document
+    id: document-a
+    attr:
+      owner_id: 00000000-0000-4000-8000-000000000031
+  ward_document:
+    kind: emergency-document
+    id: document-b
+    attr:
+      owner_id: 00000000-0000-4000-8000-000000000031
+  another_patient_document:
+    kind: emergency-document
+    id: document-c
+    attr:
+      owner_id: 00000000-0000-4000-8000-000000000034
+
+tests:
+  - name: Verified MFA-authenticated ED staff can request hospital emergency access
+    input:
+      principals: [emergency_department_staff]
+      resources: [ed_request]
+      actions: [request]
+    expected:
+      - principal: emergency_department_staff
+        resource: ed_request
+        actions:
+          request: EFFECT_ALLOW
+
+  - name: Verified MFA-authenticated pharmacy staff can request pharmacy access
+    input:
+      principals: [pharmacy_staff]
+      resources: [pharmacy_request]
+      actions: [request]
+    expected:
+      - principal: pharmacy_staff
+        resource: pharmacy_request
+        actions:
+          request: EFFECT_ALLOW
+
+  - name: Provider type cannot request another provider scope
+    input:
+      principals: [emergency_department_staff]
+      resources: [pharmacy_request]
+      actions: [request]
+    expected:
+      - principal: emergency_department_staff
+        resource: pharmacy_request
+        actions:
+          request: EFFECT_DENY
+
+  - name: Pharmacy staff cannot request hospital scope
+    input:
+      principals: [pharmacy_staff]
+      resources: [ed_request]
+      actions: [request]
+    expected:
+      - principal: pharmacy_staff
+        resource: ed_request
+        actions:
+          request: EFFECT_DENY
+
+  - name: ED grant permits only its matching hospital summary
+    input:
+      principals: [emergency_department_staff]
+      resources: [ed_grant]
+      actions: [read-hospital-summary, read-allergies]
+    expected:
+      - principal: emergency_department_staff
+        resource: ed_grant
+        actions:
+          read-hospital-summary: EFFECT_ALLOW
+          read-allergies: EFFECT_DENY
+
+  - name: Pharmacy grant permits allergies only
+    input:
+      principals: [pharmacy_staff]
+      resources: [pharmacy_grant]
+      actions: [read-hospital-summary, read-allergies]
+    expected:
+      - principal: pharmacy_staff
+        resource: pharmacy_grant
+        actions:
+          read-hospital-summary: EFFECT_DENY
+          read-allergies: EFFECT_ALLOW
+
+  - name: Emergency access denies without MFA, verified facility, or enabled profile
+    input:
+      principals: [ed_staff_without_mfa]
+      resources: [ed_request]
+      actions: [request]
+    expected:
+      - principal: ed_staff_without_mfa
+        resource: ed_request
+        actions:
+          request: EFFECT_DENY
+
+  - name: Pending pharmacy verification is denied
+    input:
+      principals: [unverified_pharmacy_staff]
+      resources: [pharmacy_request]
+      actions: [request]
+    expected:
+      - principal: unverified_pharmacy_staff
+        resource: pharmacy_request
+        actions:
+          request: EFFECT_DENY
+
+  - name: Disabled emergency profile is denied
+    input:
+      principals: [emergency_department_staff]
+      resources: [disabled_profile_request]
+      actions: [request]
+    expected:
+      - principal: emergency_department_staff
+        resource: disabled_profile_request
+        actions:
+          request: EFFECT_DENY
+
+  - name: Grant owner binding is checked before reading
+    input:
+      principals: [emergency_department_staff]
+      resources: [wrong_owner_grant]
+      actions: [read-hospital-summary]
+    expected:
+      - principal: emergency_department_staff
+        resource: wrong_owner_grant
+        actions:
+          read-hospital-summary: EFFECT_DENY
+
+  - name: Platform administrators, clinicians, and unauthenticated users cannot request or read summaries
+    input:
+      principals: [platform_admin, clinician, unauthenticated]
+      resources: [ed_grant]
+      actions: [request, read-hospital-summary, read-allergies]
+    expected:
+      - principal: platform_admin
+        resource: ed_grant
+        actions:
+          request: EFFECT_DENY
+          read-hospital-summary: EFFECT_DENY
+          read-allergies: EFFECT_DENY
+      - principal: clinician
+        resource: ed_grant
+        actions:
+          request: EFFECT_DENY
+          read-hospital-summary: EFFECT_DENY
+          read-allergies: EFFECT_DENY
+      - principal: unauthenticated
+        resource: ed_grant
+        actions:
+          request: EFFECT_DENY
+          read-hospital-summary: EFFECT_DENY
+          read-allergies: EFFECT_DENY
+
+  - name: Only platform administrators without facility affiliation can change verification
+    input:
+      principals: [platform_admin]
+      resources: [verification]
+      actions: [verify, reject, revoke-verification]
+    expected:
+      - principal: platform_admin
+        resource: verification
+        actions:
+          verify: EFFECT_ALLOW
+          reject: EFFECT_ALLOW
+          revoke-verification: EFFECT_ALLOW
+
+  - name: Facility administrators cannot change facility verification
+    input:
+      principals: [facility_admin]
+      resources: [verification]
+      actions: [verify, reject, revoke-verification]
+    expected:
+      - principal: facility_admin
+        resource: verification
+        actions:
+          verify: EFFECT_DENY
+          reject: EFFECT_DENY
+          revoke-verification: EFFECT_DENY
+
+  - name: Platform administrator cannot verify an affiliated facility
+    input:
+      principals: [platform_admin_of_facility]
+      resources: [verification]
+      actions: [verify, reject, revoke-verification]
+    expected:
+      - principal: platform_admin_of_facility
+        resource: verification
+        actions:
+          verify: EFFECT_DENY
+          reject: EFFECT_DENY
+          revoke-verification: EFFECT_DENY
+
+  - name: Independent platform administrator can review and escalate another facility grant
+    input:
+      principals: [platform_admin]
+      resources: [review_other_facility]
+      actions: [review, escalate-review]
+    expected:
+      - principal: platform_admin
+        resource: review_other_facility
+        actions:
+          review: EFFECT_ALLOW
+          escalate-review: EFFECT_ALLOW
+
+  - name: Reviewers cannot review their own facility or request
+    input:
+      principals: [platform_admin_of_facility]
+      resources: [review_other_facility]
+      actions: [review, escalate-review]
+    expected:
+      - principal: platform_admin_of_facility
+        resource: review_other_facility
+        actions:
+          review: EFFECT_DENY
+          escalate-review: EFFECT_DENY
+
+  - name: Requester cannot review or escalate their own grant
+    input:
+      principals: [platform_admin]
+      resources: [review_own_request]
+      actions: [review, escalate-review]
+    expected:
+      - principal: platform_admin
+        resource: review_own_request
+        actions:
+          review: EFFECT_DENY
+          escalate-review: EFFECT_DENY
+
+  - name: Patient can update only their own emergency visibility
+    input:
+      principals: [patient]
+      resources: [own_document, another_patient_document]
+      actions: [update-emergency-visibility]
+    expected:
+      - principal: patient
+        resource: own_document
+        actions:
+          update-emergency-visibility: EFFECT_ALLOW
+      - principal: patient
+        resource: another_patient_document
+        actions:
+          update-emergency-visibility: EFFECT_DENY
+
+  - name: Guardian can update only a ward emergency visibility
+    input:
+      principals: [guardian]
+      resources: [ward_document, another_patient_document]
+      actions: [update-emergency-visibility]
+    expected:
+      - principal: guardian
+        resource: ward_document
+        actions:
+          update-emergency-visibility: EFFECT_ALLOW
+      - principal: guardian
+        resource: another_patient_document
+        actions:
+          update-emergency-visibility: EFFECT_DENY
+
+  - name: Unrelated guardian cannot update a ward emergency visibility
+    input:
+      principals: [unrelated_guardian]
+      resources: [ward_document]
+      actions: [update-emergency-visibility]
+    expected:
+      - principal: unrelated_guardian
+        resource: ward_document
+        actions:
+          update-emergency-visibility: EFFECT_DENY
