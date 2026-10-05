@@ -47,11 +47,13 @@ principals:
     id: 00000000-0000-4000-8000-000000000016
     roles: ["platform-admin"]
     attr:
+      is_mfa_verified: true
       facility_ids: []
   platform_admin_of_facility:
     id: 00000000-0000-4000-8000-000000000017
     roles: ["platform-admin"]
     attr:
+      is_mfa_verified: true
       facility_ids: ["00000000-0000-4000-8000-000000000021"]
   clinician:
     id: 00000000-0000-4000-8000-000000000018
@@ -316,6 +318,17 @@ tests:
           verify: EFFECT_ALLOW
           reject: EFFECT_ALLOW
           revoke-verification: EFFECT_ALLOW
+
+  - name: Only MFA-authenticated platform administrators can register facilities
+    input:
+      principals: [platform_admin]
+      resources: [verification]
+      actions: [register-facility]
+    expected:
+      - principal: platform_admin
+        resource: verification
+        actions:
+          register-facility: EFFECT_ALLOW
 
   - name: Facility administrators cannot change facility verification
     input:

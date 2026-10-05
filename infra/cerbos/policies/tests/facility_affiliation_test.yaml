@@ -1,0 +1,303 @@
+name: FacilityAffiliationTestSuite
+description: Facility verification ownership and staff affiliation separation
+
+principals:
+  platform_admin:
+    id: 00000000-0000-4000-8000-000000000041
+    roles: ["platform-admin"]
+    attr:
+      is_mfa_verified: true
+      facility_ids: []
+  facility_admin_ed:
+    id: 00000000-0000-4000-8000-000000000042
+    roles: ["facility-admin"]
+    attr:
+      is_mfa_verified: true
+      facility_ids: ["00000000-0000-4000-8000-000000000051"]
+  facility_admin_pharmacy:
+    id: 00000000-0000-4000-8000-000000000043
+    roles: ["facility-admin"]
+    attr:
+      is_mfa_verified: true
+      facility_ids: ["00000000-0000-4000-8000-000000000052"]
+  unauthenticated:
+    id: unauthenticated
+    roles: ["unauthenticated"]
+    attr:
+      is_mfa_verified: false
+      facility_ids: []
+
+resources:
+  facility_admin_creation:
+    kind: facility-affiliation
+    id: initial-facility-admin
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000051
+      facility_type: hospital-emergency-department
+      facility_status: pending
+      requested_role: facility-admin
+      target_user_status: active
+      affiliation_user_id: 00000000-0000-4000-8000-000000000061
+  staff_creation_ed:
+    kind: facility-affiliation
+    id: staff-ed
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000051
+      facility_type: hospital-emergency-department
+      facility_status: verified
+      requested_role: emergency-department-staff
+      target_user_status: active
+      affiliation_user_id: 00000000-0000-4000-8000-000000000062
+  staff_creation_pharmacy:
+    kind: facility-affiliation
+    id: staff-pharmacy
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000052
+      facility_type: pharmacy
+      facility_status: verified
+      requested_role: pharmacy-staff
+      target_user_status: active
+      affiliation_user_id: 00000000-0000-4000-8000-000000000063
+  mismatched_staff_creation:
+    kind: facility-affiliation
+    id: wrong-type-staff
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000051
+      facility_type: hospital-emergency-department
+      facility_status: verified
+      requested_role: pharmacy-staff
+      target_user_status: active
+      affiliation_user_id: 00000000-0000-4000-8000-000000000063
+  pending_staff:
+    kind: facility-affiliation
+    id: pending-staff
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000051
+      facility_type: hospital-emergency-department
+      facility_status: verified
+      affiliation_user_id: 00000000-0000-4000-8000-000000000062
+      affiliation_role: emergency-department-staff
+      affiliation_status: pending
+      platform_suspended: false
+  suspended_by_facility:
+    kind: facility-affiliation
+    id: suspended-by-facility
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000051
+      facility_type: hospital-emergency-department
+      facility_status: verified
+      affiliation_user_id: 00000000-0000-4000-8000-000000000062
+      affiliation_role: emergency-department-staff
+      affiliation_status: suspended
+      platform_suspended: false
+  suspended_by_platform:
+    kind: facility-affiliation
+    id: suspended-by-platform
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000051
+      facility_type: hospital-emergency-department
+      facility_status: verified
+      affiliation_user_id: 00000000-0000-4000-8000-000000000062
+      affiliation_role: emergency-department-staff
+      affiliation_status: suspended
+      platform_suspended: true
+  facility_admin_target:
+    kind: facility-affiliation
+    id: another-admin
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000051
+      facility_type: hospital-emergency-department
+      facility_status: verified
+      affiliation_user_id: 00000000-0000-4000-8000-000000000064
+      affiliation_role: facility-admin
+      affiliation_status: active
+      platform_suspended: false
+  own_affiliation:
+    kind: facility-affiliation
+    id: own-affiliation
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000051
+      facility_type: hospital-emergency-department
+      facility_status: verified
+      affiliation_user_id: 00000000-0000-4000-8000-000000000042
+      affiliation_role: emergency-department-staff
+      affiliation_status: active
+      platform_suspended: false
+  other_facility_staff:
+    kind: facility-affiliation
+    id: other-facility-staff
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000052
+      facility_type: pharmacy
+      facility_status: verified
+      affiliation_user_id: 00000000-0000-4000-8000-000000000063
+      affiliation_role: pharmacy-staff
+      affiliation_status: active
+      platform_suspended: false
+  suspended_facility_staff:
+    kind: facility-affiliation
+    id: suspended-facility-staff
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000051
+      facility_type: hospital-emergency-department
+      facility_status: suspended
+      affiliation_user_id: 00000000-0000-4000-8000-000000000062
+      affiliation_role: emergency-department-staff
+      affiliation_status: active
+      platform_suspended: false
+  rejected_facility_staff:
+    kind: facility-affiliation
+    id: rejected-facility-staff
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000051
+      facility_type: hospital-emergency-department
+      facility_status: rejected
+      affiliation_user_id: 00000000-0000-4000-8000-000000000062
+      affiliation_role: emergency-department-staff
+      affiliation_status: active
+      platform_suspended: false
+
+tests:
+  - name: Platform administrator can create the initial facility administrator
+    input:
+      principals: [platform_admin]
+      resources: [facility_admin_creation]
+      actions: [create-facility-admin]
+    expected:
+      - principal: platform_admin
+        resource: facility_admin_creation
+        actions:
+          create-facility-admin: EFFECT_ALLOW
+
+  - name: Facility administrator can create matching ED staff affiliation
+    input:
+      principals: [facility_admin_ed]
+      resources: [staff_creation_ed]
+      actions: [create-staff]
+    expected:
+      - principal: facility_admin_ed
+        resource: staff_creation_ed
+        actions:
+          create-staff: EFFECT_ALLOW
+
+  - name: Facility administrator can create matching pharmacy staff affiliation
+    input:
+      principals: [facility_admin_pharmacy]
+      resources: [staff_creation_pharmacy]
+      actions: [create-staff]
+    expected:
+      - principal: facility_admin_pharmacy
+        resource: staff_creation_pharmacy
+        actions:
+          create-staff: EFFECT_ALLOW
+
+  - name: Facility administrator cannot create an affiliation for another provider type
+    input:
+      principals: [facility_admin_ed]
+      resources: [mismatched_staff_creation]
+      actions: [create-staff]
+    expected:
+      - principal: facility_admin_ed
+        resource: mismatched_staff_creation
+        actions:
+          create-staff: EFFECT_DENY
+
+  - name: Facility administrator can activate pending or locally suspended staff
+    input:
+      principals: [facility_admin_ed]
+      resources: [pending_staff, suspended_by_facility]
+      actions: [activate-staff]
+    expected:
+      - principal: facility_admin_ed
+        resource: pending_staff
+        actions:
+          activate-staff: EFFECT_ALLOW
+      - principal: facility_admin_ed
+        resource: suspended_by_facility
+        actions:
+          activate-staff: EFFECT_ALLOW
+
+  - name: Facility administrator cannot reactivate platform-suspended staff
+    input:
+      principals: [facility_admin_ed]
+      resources: [suspended_by_platform]
+      actions: [activate-staff]
+    expected:
+      - principal: facility_admin_ed
+        resource: suspended_by_platform
+        actions:
+          activate-staff: EFFECT_DENY
+
+  - name: Facility administrator cannot manage own or another administrator affiliation
+    input:
+      principals: [facility_admin_ed]
+      resources: [own_affiliation, facility_admin_target]
+      actions: [suspend, revoke]
+    expected:
+      - principal: facility_admin_ed
+        resource: own_affiliation
+        actions:
+          suspend: EFFECT_DENY
+          revoke: EFFECT_DENY
+      - principal: facility_admin_ed
+        resource: facility_admin_target
+        actions:
+          suspend: EFFECT_DENY
+          revoke: EFFECT_DENY
+
+  - name: Facility administrator can manage only staff in their own facility
+    input:
+      principals: [facility_admin_ed]
+      resources: [other_facility_staff]
+      actions: [suspend, revoke]
+    expected:
+      - principal: facility_admin_ed
+        resource: other_facility_staff
+        actions:
+          suspend: EFFECT_DENY
+          revoke: EFFECT_DENY
+
+  - name: Facility administrators cannot change affiliations at suspended or rejected facilities
+    input:
+      principals: [facility_admin_ed]
+      resources: [suspended_facility_staff, rejected_facility_staff]
+      actions: [suspend, revoke]
+    expected:
+      - principal: facility_admin_ed
+        resource: suspended_facility_staff
+        actions:
+          suspend: EFFECT_DENY
+          revoke: EFFECT_DENY
+      - principal: facility_admin_ed
+        resource: rejected_facility_staff
+        actions:
+          suspend: EFFECT_DENY
+          revoke: EFFECT_DENY
+
+  - name: Platform administrator can suspend or revoke any affiliation but cannot activate
+    input:
+      principals: [platform_admin]
+      resources: [facility_admin_target]
+      actions: [activate-staff, suspend, revoke]
+    expected:
+      - principal: platform_admin
+        resource: facility_admin_target
+        actions:
+          activate-staff: EFFECT_DENY
+          suspend: EFFECT_ALLOW
+          revoke: EFFECT_ALLOW
+
+  - name: Unauthenticated users cannot manage affiliations
+    input:
+      principals: [unauthenticated]
+      resources: [staff_creation_ed]
+      actions: [create-staff, create-facility-admin, activate-staff, suspend, revoke]
+    expected:
+      - principal: unauthenticated
+        resource: staff_creation_ed
+        actions:
+          create-staff: EFFECT_DENY
+          create-facility-admin: EFFECT_DENY
+          activate-staff: EFFECT_DENY
+          suspend: EFFECT_DENY
+          revoke: EFFECT_DENY

@@ -56,6 +56,7 @@ export const facilityVerificationStatusEnum = pgEnum(
 );
 
 export const facilityStaffStatusEnum = pgEnum("facility_staff_status", [
+  "pending",
   "active",
   "suspended",
   "revoked",
@@ -225,7 +226,11 @@ export const facilityStaffAffiliations = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     role: userRoleEnum("role").notNull(),
-    status: facilityStaffStatusEnum("status").notNull().default("active"),
+    status: facilityStaffStatusEnum("status").notNull().default("pending"),
+    platformSuspended: boolean("platform_suspended").notNull().default(false),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, {
+      onDelete: "restrict",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

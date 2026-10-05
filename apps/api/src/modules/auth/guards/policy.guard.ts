@@ -6,6 +6,7 @@
  */
 import {
   CanActivate,
+  BadRequestException,
   ExecutionContext,
   ForbiddenException,
   Inject,
@@ -13,6 +14,8 @@ import {
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { GRPC } from "@cerbos/grpc";
+import { and, eq } from "drizzle-orm";
+import { z } from "zod";
 import {
   POLICY_KEY,
   type PolicyMetadata
@@ -21,6 +24,12 @@ import { PUBLIC_ROUTE_KEY } from "../decorators/public.decorator.js";
 import type { AuthenticatedUser } from "../decorators/current-user.decorator.js";
 import type { FastifyRequest } from "fastify";
 import { env } from "../../../config/env.js";
+import { db } from "../../../database/index.js";
+import {
+  facilities,
+  facilityStaffAffiliations,
+  users,
+} from "../../../database/schema.js";
 import {
   findDocumentPatientOwner,
   findDocumentAccessContext,
@@ -39,6 +48,13 @@ import {
 
 type ResolvedPatient = PatientOwner;
 const EMERGENCY_PROFILE_UNAVAILABLE = "Emergency profile unavailable.";
+const STAFF_ROLES = new Set([
+  "clinician",
+  "emergency-department-staff",
+  "facility-admin",
+  "pharmacy-staff",
+  "platform-admin",
+]);
 
 @Injectable()
 export class PolicyGuard implements CanActivate {
@@ -81,6 +97,8 @@ export class PolicyGuard implements CanActivate {
     const patientIdHeader = request.headers?.["x-mediqr-patient-id"];
     const resourceId =
       params?.id ??
+      params?.facilityId ??
+      params?.affiliationId ??
       params?.patientId ??
       params?.requestId ??
       (typeof patientIdHeader === "string" ? patientIdHeader : "system");
@@ -130,6 +148,124 @@ export class PolicyGuard implements CanActivate {
       let requestGranteeId: string | undefined;
       let requestConsentContext:
         Awaited<ReturnType<typeof findActiveRequestConsentContext>> | undefined;
+      let facilityIds: string[] = [];
+      let facilityPolicyAttributes: Record<string, unknown> = {};
+      let affiliationPolicyAttributes: Record<string, unknown> = {};
+
+      if (
+        policy.resource === "emergency-access" ||
+        policy.resource === "facility-affiliation"
+      ) {
+        const rows = await db
+          .select({
+            facilityId: facilityStaffAffiliations.facilityId,
+            role: facilityStaffAffiliations.role,
+          })
+          .from(facilityStaffAffiliations)
+          .where(
+            and(
+              eq(facilityStaffAffiliations.userId, user.id),
+              eq(facilityStaffAffiliations.status, "active"),
+            ),
+          );
+        facilityIds = rows
+          .filter(({ role }) => role === user.role)
+          .map(({ facilityId }) => facilityId);
+      }
+
+      if (policy.resource === "emergency-access") {
+        const facilityId = params?.facilityId ?? params?.id;
+        if (facilityId) {
+          const parsedFacilityId = z.string().uuid().safeParse(facilityId);
+          if (!parsedFacilityId.success) {
+            throw new BadRequestException("Invalid facility identifier.");
+          }
+          const [facility] = await db
+            .select({
+              id: facilities.id,
+              type: facilities.facilityType,
+              status: facilities.verificationStatus,
+            })
+            .from(facilities)
+            .where(eq(facilities.id, facilityId))
+            .limit(1);
+          facilityPolicyAttributes = {
+            facility_id: facility?.id ?? "",
+            facility_type: facility?.type ?? "",
+            facility_status: facility?.status ?? "",
+          };
+        }
+      }
+
+      if (policy.resource === "facility-affiliation") {
+        const facilityId = params?.facilityId;
+        const affiliationId = params?.affiliationId;
+        for (const routeId of [facilityId, affiliationId]) {
+          if (routeId && !z.string().uuid().safeParse(routeId).success) {
+            throw new BadRequestException("Invalid facility affiliation identifier.");
+          }
+        }
+        const [facility] = facilityId
+          ? await db
+              .select({
+                id: facilities.id,
+                type: facilities.facilityType,
+                status: facilities.verificationStatus,
+              })
+              .from(facilities)
+              .where(eq(facilities.id, facilityId))
+              .limit(1)
+          : [];
+        const requestBody =
+          request.body && typeof request.body === "object"
+            ? (request.body as Record<string, unknown>)
+            : {};
+        const targetUserId =
+          typeof requestBody.userId === "string" ? requestBody.userId : "";
+        const parsedTargetUserId = z.string().uuid().safeParse(targetUserId);
+        const [targetUser] = parsedTargetUserId.success
+          ? await db
+              .select({ id: users.id, role: users.role, status: users.status })
+              .from(users)
+              .where(eq(users.id, parsedTargetUserId.data))
+              .limit(1)
+          : [];
+
+        const [affiliation] = affiliationId
+          ? await db
+              .select({
+                id: facilityStaffAffiliations.id,
+                facilityId: facilityStaffAffiliations.facilityId,
+                facilityType: facilities.facilityType,
+                facilityStatus: facilities.verificationStatus,
+                userId: facilityStaffAffiliations.userId,
+                role: facilityStaffAffiliations.role,
+                status: facilityStaffAffiliations.status,
+                platformSuspended: facilityStaffAffiliations.platformSuspended,
+              })
+              .from(facilityStaffAffiliations)
+              .innerJoin(
+                facilities,
+                eq(facilityStaffAffiliations.facilityId, facilities.id),
+              )
+              .where(eq(facilityStaffAffiliations.id, affiliationId))
+              .limit(1)
+          : [];
+
+        facilityPolicyAttributes = {
+          facility_id: facility?.id ?? affiliation?.facilityId ?? "",
+          facility_type: facility?.type ?? affiliation?.facilityType ?? "",
+          facility_status: facility?.status ?? affiliation?.facilityStatus ?? "",
+        };
+        affiliationPolicyAttributes = {
+          affiliation_user_id: affiliation?.userId ?? targetUser?.id ?? "",
+          affiliation_role: affiliation?.role ?? targetUser?.role ?? "",
+          affiliation_status: affiliation?.status ?? "",
+          platform_suspended: affiliation?.platformSuspended ?? false,
+          requested_role: targetUser?.role ?? "",
+          target_user_status: targetUser?.status ?? "",
+        };
+      }
       if (
         policy.resource === "notification" &&
         policy.action === "update" &&
@@ -279,12 +415,14 @@ export class PolicyGuard implements CanActivate {
           roles: [user.role],
           attributes: {
             is_verified: user.isVerified ?? false,
+            is_mfa_verified: STAFF_ROLES.has(user.role),
             has_access_grant: hasConsentGrant,
             has_consent_grant: hasConsentGrant,
             has_scope: hasConsentGrant,
             has_patient_relationship: hasPatientRelationship,
             guardian_ward_ids: guardianWardIds,
-            facility_id: user.facilityId ?? ""
+            facility_id: user.facilityId ?? "",
+            facility_ids: facilityIds
           }
         },
         resource: {
@@ -308,7 +446,9 @@ export class PolicyGuard implements CanActivate {
                   expires_at: consentResource.expiresAt.toISOString()
                 }
               : {}),
-            ...(requestGranteeId ? { grantee_id: requestGranteeId } : {})
+            ...(requestGranteeId ? { grantee_id: requestGranteeId } : {}),
+            ...facilityPolicyAttributes,
+            ...affiliationPolicyAttributes,
           }
         },
         actions: [policy.action]
@@ -327,6 +467,9 @@ export class PolicyGuard implements CanActivate {
       return true;
     } catch (err) {
       if (err instanceof ForbiddenException) {
+        throw err;
+      }
+      if (err instanceof BadRequestException) {
         throw err;
       }
       // Fail closed: if policy engine is unreachable or errors, answer is deny (Condition 5)

@@ -4,6 +4,13 @@ resourcePolicy:
   resource: emergency-access
   version: default
   rules:
+    - actions: ["register-facility"]
+      roles: ["platform-admin"]
+      effect: EFFECT_ALLOW
+      condition:
+        match:
+          expr: request.principal.attr.is_mfa_verified == true
+
     - actions: ["request"]
       roles: ["emergency-department-staff"]
       effect: EFFECT_ALLOW
@@ -96,4 +103,7 @@ resourcePolicy:
       effect: EFFECT_ALLOW
       condition:
         match:
-          expr: "!request.principal.attr.facility_ids.exists(facilityId, facilityId == request.resource.attr.facility_id)"
+          all:
+            of:
+              - expr: request.principal.attr.is_mfa_verified == true
+              - expr: "!request.principal.attr.facility_ids.exists(facilityId, facilityId == request.resource.attr.facility_id)"
