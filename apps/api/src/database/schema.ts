@@ -171,6 +171,29 @@ export const patients = pgTable(
   ]
 );
 
+export const emergencyProfiles = pgTable(
+  "emergency_profiles",
+  {
+    patientId: uuid("patient_id")
+      .primaryKey()
+      .references(() => patients.id, { onDelete: "cascade" }),
+    encryptedPayload: text("encrypted_payload").notNull(),
+    wrappedDek: text("wrapped_dek").notNull(),
+    kmsKeyId: varchar("kms_key_id", { length: 255 }).notNull(),
+    iv: varchar("iv", { length: 64 }).notNull(),
+    authTag: varchar("auth_tag", { length: 64 }).notNull(),
+    sha256Plaintext: varchar("sha256_plaintext", { length: 64 }).notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+    updatedByUserId: uuid("updated_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("emergency_profiles_enabled_idx").on(table.enabled)]
+);
+
 // ---------------------------------------------------------------------------
 // 3. Clinicians
 // ---------------------------------------------------------------------------

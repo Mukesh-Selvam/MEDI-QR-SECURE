@@ -64,6 +64,13 @@
       "when": 1791120000004,
       "tag": "0008_serialized_audit_chain",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791131392627,
+      "tag": "0009_emergency_profiles",
+      "breakpoints": true
     }
   ]
 }
