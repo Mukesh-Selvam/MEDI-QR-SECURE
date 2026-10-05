@@ -47,7 +47,8 @@ export type AuditAction =
   | "ACCESS_GRANT_CREATED"
   | "ACCESS_GRANT_REVOKED"
   | "CONSENT_GRANTED"
-  | "CONSENT_REVOKED";
+  | "CONSENT_REVOKED"
+  | "EMERGENCY_PROFILE_UPDATED";
 
 
 export type AuditOutcome = "SUCCESS" | "FAILURE" | "DENIED";

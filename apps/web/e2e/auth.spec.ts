@@ -60,6 +60,12 @@ test.describe("browser authentication", () => {
       const connection = await createDatabaseClient();
       try {
         await connection.connect();
+        if (patientDatabaseId) {
+          await connection.query(
+            "DELETE FROM emergency_profiles WHERE patient_id = $1",
+            [patientDatabaseId]
+          );
+        }
         if (patientUserId) {
           await connection.query(
             `UPDATE users
@@ -117,6 +123,39 @@ test.describe("browser authentication", () => {
       page.getByText("Authenticated (Session Active)")
     ).toBeVisible();
     await expect(page.getByText("Role: patient")).toBeVisible();
+    const profileResponse = await page.request.get("/api/v1/auth/me");
+    expect(profileResponse.ok()).toBeTruthy();
+    const profile = (await profileResponse.json()) as {
+      id: string;
+      patientId: string | null;
+    };
+    patientUserId = profile.id;
+    patientDatabaseId = profile.patientId ?? "";
+
+    await page.goto("/patient/emergency");
+    await expect(
+      page.getByRole("heading", { name: "Emergency details" })
+    ).toBeVisible();
+    const emergencyOptIn = page.getByRole("checkbox", {
+      name: /Allow emergency access to these details/,
+    });
+    await expect(emergencyOptIn).not.toBeChecked();
+    await page.getByLabel("Allergies").fill("FAKE E2E declared allergy");
+    await page.getByRole("button", { name: "Add an emergency contact" }).click();
+    await page.getByLabel("Contact name").fill("FAKE E2E Contact");
+    await page.getByLabel("Relationship").fill("guardian");
+    await page.getByLabel("Contact phone").fill("+910000000000");
+    await emergencyOptIn.check();
+    await page.getByRole("button", { name: "Save emergency details" }).click();
+    await expect(
+      page.getByRole("status").getByText("Your emergency details have been saved.")
+    ).toBeVisible();
+    await emergencyOptIn.uncheck();
+    await page.getByRole("button", { name: "Save emergency details" }).click();
+    await expect(
+      page.getByRole("status").getByText("Your emergency details have been saved.")
+    ).toBeVisible();
+
     await page.goto("/patient/notifications");
     await expect(
       page.getByRole("heading", { name: "Notifications" })

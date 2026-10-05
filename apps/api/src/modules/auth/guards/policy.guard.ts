@@ -191,6 +191,24 @@ export class PolicyGuard implements CanActivate {
           throw new ForbiddenException("Patient record not found");
         }
       }
+      if (
+        policy.resource === "emergency-profile" &&
+        (policy.action === "read" || policy.action === "update")
+      ) {
+        patient = params?.patientId
+          ? await findPatientOwner(params.patientId)
+          : undefined;
+        if (!patient) {
+          throw new ForbiddenException("Emergency profile not found");
+        }
+        if (
+          user.role !== "patient" &&
+          user.role !== "guardian" &&
+          user.role !== "platform-admin"
+        ) {
+          throw new ForbiddenException("Emergency profile access is unavailable");
+        }
+      }
 
       if (
         policy.resource === "access-request" &&
@@ -274,7 +292,11 @@ export class PolicyGuard implements CanActivate {
         },
         resource: {
           kind: policy.resource,
-          id: policy.resource === "patient" ? patient?.id ?? resourceId : resourceId,
+          id:
+            policy.resource === "patient" ||
+            policy.resource === "emergency-profile"
+              ? patient?.id ?? resourceId
+              : resourceId,
           attributes: {
             owner_id:
               policy.resource === "notification"

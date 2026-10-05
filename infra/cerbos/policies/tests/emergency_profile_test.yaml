@@ -1,0 +1,67 @@
+name: EmergencyProfileTestSuite
+description: Patient-declared emergency profile boundaries
+
+principals:
+  patient:
+    id: patient-user-a
+    roles: ["patient"]
+  another_patient:
+    id: patient-user-b
+    roles: ["patient"]
+  guardian:
+    id: guardian-user
+    roles: ["guardian"]
+    attr:
+      guardian_ward_ids: ["child-user-a"]
+  unrelated_guardian:
+    id: other-guardian
+    roles: ["guardian"]
+    attr:
+      guardian_ward_ids: ["child-user-b"]
+
+resources:
+  own_profile:
+    kind: emergency-profile
+    id: patient-a
+    attr:
+      owner_id: patient-user-a
+  ward_profile:
+    kind: emergency-profile
+    id: child-a
+    attr:
+      owner_id: child-user-a
+
+tests:
+  - name: Patient can read and update their own emergency profile
+    input:
+      principals: [patient, another_patient]
+      resources: [own_profile]
+      actions: [read, update]
+    expected:
+      - principal: patient
+        resource: own_profile
+        actions:
+          read: EFFECT_ALLOW
+          update: EFFECT_ALLOW
+      - principal: another_patient
+        resource: own_profile
+        actions:
+          read: EFFECT_DENY
+          update: EFFECT_DENY
+
+  - name: Active guardian can manage only their ward profile
+    input:
+      principals: [guardian, unrelated_guardian]
+      resources: [ward_profile]
+      actions: [read, update]
+    expected:
+      - principal: guardian
+        resource: ward_profile
+        actions:
+          read: EFFECT_ALLOW
+          update: EFFECT_ALLOW
+      - principal: unrelated_guardian
+        resource: ward_profile
+        actions:
+          read: EFFECT_DENY
+          update: EFFECT_DENY
