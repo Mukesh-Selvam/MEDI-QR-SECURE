@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "../../database/index.js";
 import {
@@ -328,5 +328,53 @@ describe("Facility verification and affiliations (integration)", () => {
         /^[0-9a-f-]{36}$/i.test(resourceId),
       ),
     ).toBe(true);
+  });
+
+  it("protects the last active facility administrator from non-platform suspension or revocation", async () => {
+    const facility = await service.createFacility(
+      {
+        facilityType: "hospital-emergency-department",
+        displayName: `FAKE Last Admin Hospital ${suffix}`,
+        registrationNumber: `FAKE-LAST-ADMIN-${suffix}`,
+        registrationJurisdiction: "FAKE-IND",
+      },
+      platformAdmin,
+      "127.0.0.1",
+    );
+    facilityIds.push(facility.id);
+
+    const lastAdminAffiliation = await service.createFacilityAdminAffiliation(
+      facility.id,
+      { userId: secondFacilityAdminId },
+      platformAdmin,
+      "127.0.0.1",
+    );
+
+    for (const mutation of ["suspend", "revoke"] as const) {
+      await expect(
+        service.updateStaffAffiliation(
+          facility.id,
+          lastAdminAffiliation.id,
+          mutation,
+          facilityAdmin,
+          "127.0.0.1",
+        ),
+      ).rejects.toThrow("last active facility administrator");
+    }
+
+    const [stillActive] = await db
+      .select({ status: facilityStaffAffiliations.status })
+      .from(facilityStaffAffiliations)
+      .where(eq(facilityStaffAffiliations.id, lastAdminAffiliation.id));
+    expect(stillActive.status).toBe("active");
+
+    const platformSuspended = await service.updateStaffAffiliation(
+      facility.id,
+      lastAdminAffiliation.id,
+      "suspend",
+      platformAdmin,
+      "127.0.0.1",
+    );
+    expect(platformSuspended.status).toBe("suspended");
   });
 });

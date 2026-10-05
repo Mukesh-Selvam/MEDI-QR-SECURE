@@ -6,7 +6,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { and, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { db } from "../../database/index.js";
 import {
   facilities,
@@ -26,14 +26,11 @@ import {
 type FacilityAudit = Pick<AuditService, "hashIp" | "logInTransaction">;
 type AffiliationStatus =
   (typeof facilityStaffAffiliations.$inferSelect)["status"];
-type AffiliationRole =
-  (typeof facilityStaffAffiliations.$inferSelect)["role"];
+type AffiliationRole = (typeof facilityStaffAffiliations.$inferSelect)["role"];
 type FacilityType = (typeof facilities.$inferSelect)["facilityType"];
 type AffiliationMutation = "activate" | "suspend" | "revoke";
 
-const facilityVerificationActions: Partial<
-  Record<string, AuditAction>
-> = {
+const facilityVerificationActions: Partial<Record<string, AuditAction>> = {
   "pending:verified": "FACILITY_VERIFICATION_PENDING_TO_VERIFIED",
   "pending:rejected": "FACILITY_VERIFICATION_PENDING_TO_REJECTED",
   "pending:suspended": "FACILITY_VERIFICATION_PENDING_TO_SUSPENDED",
@@ -56,9 +53,7 @@ const staffAffiliationActions: Partial<Record<string, AuditAction>> = {
   "suspended:revoked": "FACILITY_STAFF_AFFILIATION_SUSPENDED_TO_REVOKED",
 };
 
-const facilityAdminAffiliationActions: Partial<
-  Record<string, AuditAction>
-> = {
+const facilityAdminAffiliationActions: Partial<Record<string, AuditAction>> = {
   "active:suspended": "FACILITY_ADMIN_AFFILIATION_ACTIVE_TO_SUSPENDED",
   "active:revoked": "FACILITY_ADMIN_AFFILIATION_ACTIVE_TO_REVOKED",
   "suspended:revoked": "FACILITY_ADMIN_AFFILIATION_SUSPENDED_TO_REVOKED",
@@ -66,9 +61,7 @@ const facilityAdminAffiliationActions: Partial<
 
 @Injectable()
 export class FacilitiesService {
-  constructor(
-    @Inject(AuditService) private readonly audit: FacilityAudit,
-  ) {}
+  constructor(@Inject(AuditService) private readonly audit: FacilityAudit) {}
 
   async createFacility(
     input: unknown,
@@ -77,7 +70,9 @@ export class FacilitiesService {
     userAgent?: string,
   ) {
     if (actor.role !== "platform-admin") {
-      throw new ForbiddenException("Only platform administrators can create facilities.");
+      throw new ForbiddenException(
+        "Only platform administrators can create facilities.",
+      );
     }
     const parsed = createFacilitySchema.safeParse(input);
     if (!parsed.success) {
@@ -165,7 +160,9 @@ export class FacilitiesService {
 
       const nextStatus = parsed.data.status;
       const action =
-        facilityVerificationActions[`${facility.verificationStatus}:${nextStatus}`];
+        facilityVerificationActions[
+          `${facility.verificationStatus}:${nextStatus}`
+        ];
       if (!action) {
         throw new ConflictException(
           "The facility cannot transition from its current verification status.",
@@ -183,7 +180,8 @@ export class FacilitiesService {
         })
         .where(eq(facilities.id, facilityId))
         .returning();
-      if (!updated) throw new Error("Facility verification update returned no record.");
+      if (!updated)
+        throw new Error("Facility verification update returned no record.");
 
       await this.writeAudit(
         {
@@ -211,12 +209,17 @@ export class FacilitiesService {
     this.requirePlatformAdmin(actor);
     const parsed = affiliationUserSchema.safeParse(input);
     if (!parsed.success) {
-      throw new BadRequestException("Invalid facility administrator affiliation.");
+      throw new BadRequestException(
+        "Invalid facility administrator affiliation.",
+      );
     }
 
     return db.transaction(async (transaction) => {
       await this.requireFacility(transaction, facilityId);
-      const target = await this.requireActiveUser(transaction, parsed.data.userId);
+      const target = await this.requireActiveUser(
+        transaction,
+        parsed.data.userId,
+      );
       if (target.role !== "facility-admin" || target.id === actor.id) {
         throw new BadRequestException(
           "The selected account cannot be assigned as a facility administrator.",
@@ -245,7 +248,9 @@ export class FacilitiesService {
         })
         .returning();
       if (!affiliation) {
-        throw new ConflictException("An affiliation already exists for this account.");
+        throw new ConflictException(
+          "An affiliation already exists for this account.",
+        );
       }
 
       await this.writeAudit(
@@ -292,7 +297,10 @@ export class FacilitiesService {
           "Staff affiliations cannot be created for a facility that is not eligible.",
         );
       }
-      const target = await this.requireActiveUser(transaction, parsed.data.userId);
+      const target = await this.requireActiveUser(
+        transaction,
+        parsed.data.userId,
+      );
       if (target.id === actor.id || target.role === "facility-admin") {
         throw new ForbiddenException(
           "Facility administrators cannot create or manage facility-administrator affiliations.",
@@ -326,7 +334,9 @@ export class FacilitiesService {
         })
         .returning();
       if (!affiliation) {
-        throw new ConflictException("An affiliation already exists for this account.");
+        throw new ConflictException(
+          "An affiliation already exists for this account.",
+        );
       }
 
       await this.writeAudit(
@@ -355,10 +365,13 @@ export class FacilitiesService {
     facilityId = this.requireResourceId(facilityId);
     affiliationId = this.requireResourceId(affiliationId);
     if (actor.role !== "facility-admin" && actor.role !== "platform-admin") {
-      throw new ForbiddenException("Staff affiliation administration is unavailable.");
+      throw new ForbiddenException(
+        "Staff affiliation administration is unavailable.",
+      );
     }
 
     return db.transaction(async (transaction) => {
+      const facility = await this.requireFacility(transaction, facilityId);
       const [affiliation] = await transaction
         .select()
         .from(facilityStaffAffiliations)
@@ -377,7 +390,29 @@ export class FacilitiesService {
         );
       }
 
-      const facility = await this.requireFacility(transaction, facilityId);
+      if (
+        actor.role !== "platform-admin" &&
+        affiliation.role === "facility-admin" &&
+        affiliation.status === "active" &&
+        (mutation === "suspend" || mutation === "revoke")
+      ) {
+        const [activeAdmins] = await transaction
+          .select({ count: count() })
+          .from(facilityStaffAffiliations)
+          .where(
+            and(
+              eq(facilityStaffAffiliations.facilityId, facilityId),
+              eq(facilityStaffAffiliations.role, "facility-admin"),
+              eq(facilityStaffAffiliations.status, "active"),
+            ),
+          );
+        if ((activeAdmins?.count ?? 0) <= 1) {
+          throw new ForbiddenException(
+            "The last active facility administrator cannot be suspended or revoked.",
+          );
+        }
+      }
+
       if (actor.role === "facility-admin") {
         await this.requireFacilityAdmin(transaction, facilityId, actor.id);
         if (
@@ -517,7 +552,9 @@ export class FacilitiesService {
       )
       .limit(1);
     if (existing) {
-      throw new ConflictException("An affiliation already exists for this account.");
+      throw new ConflictException(
+        "An affiliation already exists for this account.",
+      );
     }
   }
 
@@ -553,7 +590,10 @@ export class FacilitiesService {
       throw new ConflictException("A revoked affiliation cannot be changed.");
     }
     if (mutation === "suspend") {
-      if (current === "suspended" && (platformSuspended || actorRole !== "platform-admin")) {
+      if (
+        current === "suspended" &&
+        (platformSuspended || actorRole !== "platform-admin")
+      ) {
         throw new ConflictException("This affiliation is already suspended.");
       }
       return "suspended";
@@ -585,13 +625,16 @@ export class FacilitiesService {
         ? facilityAdminAffiliationActions
         : staffAffiliationActions;
     const action = actions[`${current}:${next}`];
-    if (!action) throw new ConflictException("Unsupported affiliation transition.");
+    if (!action)
+      throw new ConflictException("Unsupported affiliation transition.");
     return action;
   }
 
   private requirePlatformAdmin(actor: AuthenticatedUser): void {
     if (actor.role !== "platform-admin") {
-      throw new ForbiddenException("Only platform administrators can create facility administrators.");
+      throw new ForbiddenException(
+        "Only platform administrators can create facility administrators.",
+      );
     }
   }
 
