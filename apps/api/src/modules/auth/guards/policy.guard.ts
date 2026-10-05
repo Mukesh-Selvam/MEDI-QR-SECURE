@@ -424,6 +424,20 @@ export class PolicyGuard implements CanActivate {
           throw new ForbiddenException("Document or patient record not found");
         }
       }
+      if (
+        policy.resource === "emergency-document" &&
+        policy.action === "update-emergency-visibility" &&
+        params?.documentId
+      ) {
+        const context = await findDocumentAccessContext(params.documentId);
+        patient = context?.patient;
+        documentType = context?.documentType;
+        if (!patient || !documentType) {
+          throw new ForbiddenException(
+            "Emergency document visibility unavailable.",
+          );
+        }
+      }
       if (policy.resource === "document" && policy.action === "create") {
         patient = await this.resolveDocumentPatient(request, params, policy);
         if (!patient) {

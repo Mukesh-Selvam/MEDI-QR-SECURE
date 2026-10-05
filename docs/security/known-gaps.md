@@ -5,6 +5,17 @@ Last reviewed: 2026-10-04
 ## Runtime and key management
 
 - The API's `LocalKmsAdapter` is development-only and fails startup in production. No cloud KMS adapter is implemented yet. Production deployment must wait until a managed KMS adapter, key rotation, and its integration tests are in place. See `apps/api/src/modules/vault/kms/local-kms.adapter.ts`.
+- Production notification delivery is not implemented: production uses the `NoopNotificationEmailProvider`, and there is no SMS or push provider. Emergency-access delivery and the operational response to undelivered notifications must be implemented and tested before production use.
+
+## Emergency access and affiliations
+
+- Facility affiliation onboarding does not yet use named-staff invitations accepted by the invited staff member after a verified Keycloak MFA claim. The current affiliation flow associates existing user IDs and does not independently verify an observed MFA claim.
+- Facility administration does not enforce last-administrator protection or require two active facility administrators before emergency eligibility.
+- Suspending an affiliation makes subsequent emergency-summary authorization checks deny access, but does not persistently revoke existing grant rows or emit a grant-revocation audit event.
+- Facility verification still needs an authoritative verification process and production evidence. A facility administrator cannot verify their own facility; verification status changes are restricted to platform administrators.
+- Emergency-access abuse controls are incomplete: provider and patient rate caps, daily provider caps, anomaly detection (many patients, repeated attempts, and off-hours), and automatic suspension thresholds are not implemented.
+- The admin console is incomplete: verification and break-glass review queues, review escalation, audit exploration, and audit-chain status visibility remain outstanding. Every grant must be reviewed within 24 hours; overdue escalation to a second platform administrator or compliance role is not yet implemented.
+- Production end-to-end notification delivery, provider-side emergency-grant and summary E2E coverage, and operational verification of retry exhaustion remain required before production use.
 
 ## Dependency advisories
 

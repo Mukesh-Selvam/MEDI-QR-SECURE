@@ -76,7 +76,16 @@ describe("MailpitNotificationEmailProvider", () => {
       "Sign in to your MediQR account to review this notification.",
     );
     expect(sentEmail?.text).not.toContain("EMERGENCY_ACCESS_GRANTED");
-    expect(sentEmail?.text).not.toContain("allergies");
+    for (const sensitiveText of [
+      "allergies",
+      "blood group",
+      "Fake Patient",
+      "+919000000000",
+    ]) {
+      expect(sentEmail?.text).not.toContain(sensitiveText);
+    }
+    expect(sentEmail?.text).not.toMatch(/https?:\/\/|www\.|href=/i);
+    expect(sentEmail).not.toHaveProperty("html");
     expect(sentEmail?.text).toContain(requestId);
   });
 

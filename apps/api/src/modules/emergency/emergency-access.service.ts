@@ -4,7 +4,8 @@ import {
   Inject,
   Injectable,
 } from "@nestjs/common";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db } from "../../database/index.js";
 import {
   documents,
@@ -13,6 +14,7 @@ import {
   emergencyProfiles,
   facilities,
   facilityStaffAffiliations,
+  guardianships,
   patients,
   qrCredentials,
 } from "../../database/schema.js";
@@ -21,13 +23,20 @@ import { AuditService } from "../audit/audit.service.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
 import { QrResolutionService } from "../qr/qr-resolution.service.js";
 import { VaultCryptoService } from "../vault/crypto/vault-crypto.service.js";
+import type { UpdateEmergencyDocumentVisibilityInput } from "./emergency-document-visibility.schema.js";
 import { emergencyProfileSchema } from "./emergency-profile.schema.js";
 import type { CreateEmergencyAccessRequestInput } from "./emergency-access.schema.js";
 
 const GRANT_LIFETIME_MS = 30 * 60 * 1000;
 const REVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
-const PRESCRIPTION_SUMMARY_LIMIT = 10;
+const PRESCRIPTION_SUMMARY_LIMIT = 5;
 const EMERGENCY_ACCESS_UNAVAILABLE = "Emergency access unavailable.";
+const EMERGENCY_DOCUMENT_VISIBILITY_UNAVAILABLE =
+  "Emergency document visibility unavailable.";
+const guardianPatients = alias(
+  patients,
+  "emergency_visibility_guardian_patient",
+);
 type EmergencyStaffRole = "emergency-department-staff" | "pharmacy-staff";
 
 function isEmergencyStaffRole(role: string): role is EmergencyStaffRole {
@@ -70,6 +79,123 @@ export class EmergencyAccessService {
     @Inject(VaultCryptoService)
     private readonly crypto: EmergencyCrypto,
   ) {}
+
+  async updatePrescriptionVisibility(
+    documentId: string,
+    input: UpdateEmergencyDocumentVisibilityInput,
+    actor: AuthenticatedUser,
+    ip: string,
+    userAgent?: string,
+  ): Promise<{ documentId: string; emergencyVisible: boolean }> {
+    if (actor.role !== "patient" && actor.role !== "guardian") {
+      throw new ForbiddenException(EMERGENCY_DOCUMENT_VISIBILITY_UNAVAILABLE);
+    }
+
+    return db.transaction(async (transaction) => {
+      const [document] = await transaction
+        .select({
+          id: documents.id,
+          patientId: documents.patientId,
+          patientUserId: patients.userId,
+          documentType: documents.documentType,
+          status: documents.status,
+          deletedAt: documents.deletedAt,
+          emergencyVisible: documents.emergencyVisible,
+        })
+        .from(documents)
+        .innerJoin(patients, eq(documents.patientId, patients.id))
+        .where(eq(documents.id, documentId))
+        .for("update")
+        .limit(1);
+      if (
+        !document ||
+        document.deletedAt !== null ||
+        document.documentType !== "prescription" ||
+        document.status !== "ready"
+      ) {
+        throw new ForbiddenException(EMERGENCY_DOCUMENT_VISIBILITY_UNAVAILABLE);
+      }
+
+      if (actor.role === "patient") {
+        if (document.patientUserId !== actor.id) {
+          throw new ForbiddenException(
+            EMERGENCY_DOCUMENT_VISIBILITY_UNAVAILABLE,
+          );
+        }
+      } else {
+        const [relationship] = await transaction
+          .select({ id: guardianships.id })
+          .from(guardianships)
+          .innerJoin(
+            guardianPatients,
+            eq(guardianships.guardianPatientId, guardianPatients.id),
+          )
+          .where(
+            and(
+              eq(guardianPatients.userId, actor.id),
+              eq(guardianships.wardPatientId, document.patientId),
+              eq(guardianships.verificationStatus, "verified"),
+              or(
+                isNull(guardianships.validUntil),
+                gt(guardianships.validUntil, new Date()),
+              ),
+            ),
+          )
+          .for("share")
+          .limit(1);
+        if (!relationship) {
+          throw new ForbiddenException(
+            EMERGENCY_DOCUMENT_VISIBILITY_UNAVAILABLE,
+          );
+        }
+      }
+
+      if (document.emergencyVisible === input.emergencyVisible) {
+        return {
+          documentId: document.id,
+          emergencyVisible: document.emergencyVisible,
+        };
+      }
+
+      const [updated] = await transaction
+        .update(documents)
+        .set({
+          emergencyVisible: input.emergencyVisible,
+          updatedAt: new Date(),
+        })
+        .where(eq(documents.id, document.id))
+        .returning({
+          id: documents.id,
+          emergencyVisible: documents.emergencyVisible,
+        });
+      if (!updated) {
+        throw new Error(
+          "Emergency document visibility update returned no row.",
+        );
+      }
+
+      await this.audit.logInTransaction(
+        {
+          actorId: actor.id,
+          actorRole: actor.role,
+          action: input.emergencyVisible
+            ? "EMERGENCY_DOCUMENT_VISIBLE_FALSE_TO_TRUE"
+            : "EMERGENCY_DOCUMENT_VISIBLE_TRUE_TO_FALSE",
+          resourceType: "document",
+          resourceId: updated.id,
+          outcome: "SUCCESS",
+          ipHash: this.audit.hashIp(ip),
+          userAgent,
+        },
+        transaction,
+      );
+
+      return {
+        documentId: updated.id,
+        emergencyVisible: updated.emergencyVisible,
+      };
+    });
+  }
 
   async createRequest(
     facilityId: string,

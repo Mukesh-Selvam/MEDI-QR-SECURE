@@ -178,65 +178,76 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
     if (!this.emailProvider.enabled || this.outboxProcessing) return;
     this.outboxProcessing = true;
     try {
-      const messages = await db.transaction(async (transaction) => {
-        const now = new Date();
-        await transaction
-          .update(notificationEmailOutbox)
-          .set({ failedAt: now, lockedUntil: null })
-          .where(
-            and(
-              gte(notificationEmailOutbox.attempts, OUTBOX_MAX_ATTEMPTS),
-              isNotNull(notificationEmailOutbox.lockedUntil),
-              lt(notificationEmailOutbox.lockedUntil, now),
-              isNull(notificationEmailOutbox.sentAt),
-              isNull(notificationEmailOutbox.failedAt),
-            ),
-          );
-        const candidates = await transaction
-          .select({
-            id: notificationEmailOutbox.id,
-            attempts: notificationEmailOutbox.attempts,
-            recipient: users.email,
-            eventType: notifications.eventType,
-            requestId: notifications.requestId,
-            createdAt: notifications.createdAt,
-          })
-          .from(notificationEmailOutbox)
-          .innerJoin(
-            notifications,
-            eq(notificationEmailOutbox.notificationId, notifications.id),
-          )
-          .innerJoin(users, eq(notifications.recipientUserId, users.id))
-          .where(
-            and(
-              lte(notificationEmailOutbox.nextAttemptAt, now),
-              lt(notificationEmailOutbox.attempts, OUTBOX_MAX_ATTEMPTS),
-              isNull(notificationEmailOutbox.sentAt),
-              isNull(notificationEmailOutbox.failedAt),
-              or(
-                isNull(notificationEmailOutbox.lockedUntil),
-                lt(notificationEmailOutbox.lockedUntil, now),
-              ),
-            ),
-          )
-          .for("update", { skipLocked: true })
-          .limit(OUTBOX_BATCH_SIZE);
-
-        for (const candidate of candidates) {
-          await transaction
+      const { messages, recoveredExhaustedCount } = await db.transaction(
+        async (transaction) => {
+          const now = new Date();
+          const recoveredExhaustedItems = await transaction
             .update(notificationEmailOutbox)
-            .set({
-              attempts: candidate.attempts + 1,
-              lockedUntil: new Date(now.getTime() + OUTBOX_LEASE_MS),
+            .set({ failedAt: now, lockedUntil: null })
+            .where(
+              and(
+                gte(notificationEmailOutbox.attempts, OUTBOX_MAX_ATTEMPTS),
+                isNotNull(notificationEmailOutbox.lockedUntil),
+                lt(notificationEmailOutbox.lockedUntil, now),
+                isNull(notificationEmailOutbox.sentAt),
+                isNull(notificationEmailOutbox.failedAt),
+              ),
+            )
+            .returning({ id: notificationEmailOutbox.id });
+          const candidates = await transaction
+            .select({
+              id: notificationEmailOutbox.id,
+              attempts: notificationEmailOutbox.attempts,
+              recipient: users.email,
+              eventType: notifications.eventType,
+              requestId: notifications.requestId,
+              createdAt: notifications.createdAt,
             })
-            .where(eq(notificationEmailOutbox.id, candidate.id));
-        }
-        return candidates.map((candidate) => ({
-          ...candidate,
-          attempts: candidate.attempts + 1,
-        }));
-      });
+            .from(notificationEmailOutbox)
+            .innerJoin(
+              notifications,
+              eq(notificationEmailOutbox.notificationId, notifications.id),
+            )
+            .innerJoin(users, eq(notifications.recipientUserId, users.id))
+            .where(
+              and(
+                lte(notificationEmailOutbox.nextAttemptAt, now),
+                lt(notificationEmailOutbox.attempts, OUTBOX_MAX_ATTEMPTS),
+                isNull(notificationEmailOutbox.sentAt),
+                isNull(notificationEmailOutbox.failedAt),
+                or(
+                  isNull(notificationEmailOutbox.lockedUntil),
+                  lt(notificationEmailOutbox.lockedUntil, now),
+                ),
+              ),
+            )
+            .for("update", { skipLocked: true })
+            .limit(OUTBOX_BATCH_SIZE);
 
+          for (const candidate of candidates) {
+            await transaction
+              .update(notificationEmailOutbox)
+              .set({
+                attempts: candidate.attempts + 1,
+                lockedUntil: new Date(now.getTime() + OUTBOX_LEASE_MS),
+              })
+              .where(eq(notificationEmailOutbox.id, candidate.id));
+          }
+          return {
+            messages: candidates.map((candidate) => ({
+              ...candidate,
+              attempts: candidate.attempts + 1,
+            })),
+            recoveredExhaustedCount: recoveredExhaustedItems.length,
+          };
+        },
+      );
+
+      if (recoveredExhaustedCount > 0) {
+        this.logger.error(
+          `Emergency notification retries exhausted for ${recoveredExhaustedCount} outbox item(s).`,
+        );
+      }
       for (const message of messages) {
         if (!message.recipient) {
           await this.finishEmergencyEmail(message.id, false, message.attempts);

@@ -40,15 +40,22 @@ import {
   isVerifiedGuardianOfPatient,
 } from "../auth/patient-access.js";
 import { FileValidatorService } from "./safety/file-validator.service.js";
-import { StorageService, PRESIGNED_URL_EXPIRY_SECONDS } from "./storage/storage.service.js";
+import {
+  StorageService,
+  PRESIGNED_URL_EXPIRY_SECONDS,
+} from "./storage/storage.service.js";
 import { FhirDocumentMapper } from "./fhir/fhir-document.mapper.js";
 import { AuditService } from "../audit/audit.service.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
-import { SCAN_QUEUE_NAME, type ScanDocumentJob } from "./scanner/document-scan.worker.js";
+import {
+  SCAN_QUEUE_NAME,
+  type ScanDocumentJob,
+} from "./scanner/document-scan.worker.js";
 import { env } from "../../config/env.js";
 import { getRedisConnectionOptions } from "../../config/redis.config.js";
 
-export type DocumentType = "scan" | "lab" | "prescription" | "vaccination" | "discharge";
+export type DocumentType =
+  "scan" | "lab" | "prescription" | "vaccination" | "discharge";
 export type UploadSource = "patient-uploaded" | "facility-verified";
 export type StreamContentType = "application/pdf" | "image/jpeg" | "image/png";
 
@@ -59,7 +66,9 @@ function getStreamContentType(value: string): StreamContentType {
     case "image/png":
       return value;
     default:
-      throw new BadRequestException("Document content type is not supported for streaming");
+      throw new BadRequestException(
+        "Document content type is not supported for streaming",
+      );
   }
 }
 
@@ -97,6 +106,7 @@ export interface TimelineDocument {
   scanStatus: string;
   documentDate: Date | null;
   createdAt: Date;
+  emergencyVisible?: boolean;
 }
 
 export interface TimelineGroup {
@@ -105,7 +115,7 @@ export interface TimelineGroup {
 }
 
 function groupTimelineDocuments(
-  documentsToGroup: TimelineDocument[]
+  documentsToGroup: TimelineDocument[],
 ): TimelineGroup[] {
   const grouped = new Map<DocumentType, TimelineDocument[]>();
   const typeOrder: DocumentType[] = [
@@ -117,7 +127,8 @@ function groupTimelineDocuments(
   ];
 
   for (const document of documentsToGroup) {
-    if (!grouped.has(document.documentType)) grouped.set(document.documentType, []);
+    if (!grouped.has(document.documentType))
+      grouped.set(document.documentType, []);
     grouped.get(document.documentType)!.push(document);
   }
 
@@ -133,7 +144,8 @@ export class VaultService {
 
   constructor(
     @Inject(VaultCryptoService) private readonly crypto: VaultCryptoService,
-    @Inject(FileValidatorService) private readonly fileValidator: FileValidatorService,
+    @Inject(FileValidatorService)
+    private readonly fileValidator: FileValidatorService,
     @Inject(StorageService) private readonly storage: StorageService,
     @Inject(FhirDocumentMapper) private readonly fhirMapper: FhirDocumentMapper,
     @Inject(AuditService) private readonly audit: AuditService,
@@ -156,7 +168,7 @@ export class VaultService {
     patientId: string,
     uploaderId: string,
     uploaderRole: string,
-    facilityId?: string
+    facilityId?: string,
   ): Promise<UploadSource> {
     if (uploaderRole === "patient") {
       const [patient] = await db
@@ -166,26 +178,31 @@ export class VaultService {
         .limit(1);
 
       if (patient) return "patient-uploaded";
-      throw new ForbiddenException("Patients may upload only to their own record");
+      throw new ForbiddenException(
+        "Patients may upload only to their own record",
+      );
     }
 
     if (uploaderRole === "guardian") {
       if (await isVerifiedGuardianOfPatient(uploaderId, patientId)) {
         return "patient-uploaded";
       }
-      throw new ForbiddenException("Guardian upload requires an active verified guardianship");
+      throw new ForbiddenException(
+        "Guardian upload requires an active verified guardianship",
+      );
     }
 
     if (
       facilityId &&
-      (uploaderRole === "facility-admin" || uploaderRole === "pharmacy-staff") &&
-      await hasActiveFacilityPatientRelationship(facilityId, patientId)
+      (uploaderRole === "facility-admin" ||
+        uploaderRole === "pharmacy-staff") &&
+      (await hasActiveFacilityPatientRelationship(facilityId, patientId))
     ) {
       return "facility-verified";
     }
 
     throw new ForbiddenException(
-      "Upload is not permitted without an established patient relationship"
+      "Upload is not permitted without an established patient relationship",
     );
   }
 
@@ -193,7 +210,9 @@ export class VaultService {
    * Validates, encrypts, and stages a document in quarantine for scanning.
    * Returns immediately (202 Accepted); scan is asynchronous.
    */
-  async uploadDocument(input: UploadDocumentInput): Promise<{ id: string; status: "quarantined" }> {
+  async uploadDocument(
+    input: UploadDocumentInput,
+  ): Promise<{ id: string; status: "quarantined" }> {
     const {
       fileBuffer,
       declaredMimeType,
@@ -211,7 +230,7 @@ export class VaultService {
       patientId,
       uploaderId,
       uploaderRole,
-      facilityId
+      facilityId,
     );
 
     // 1. Validate file (magic bytes, size, metadata strip)
@@ -223,25 +242,29 @@ export class VaultService {
     // 3. Put encrypted ciphertext in quarantine bucket
     const quarantineKey = await this.storage.putQuarantine(
       encrypted.ciphertext,
-      validated.mimeType
+      validated.mimeType,
     );
 
     // 4. Persist document record + crypto keys in a transaction
-    const [doc] = await db.insert(documents).values({
-      patientId,
-      uploaderId,
-      uploadSource: uploadSource as "patient-uploaded" | "facility-verified",
-      documentType: documentType as "scan" | "lab" | "prescription" | "vaccination" | "discharge",
-      storageKey: quarantineKey,
-      storageBucket: env.STORAGE_BUCKET_QUARANTINE,
-      mimeType: validated.mimeType,
-      fileSizeBytes: validated.fileSizeBytes,
-      status: "quarantined",
-      scanStatus: "pending",
-      documentDate: documentDate ?? null,
-      facilityId: facilityId ?? null,
-      notes: notes ?? null,
-    }).returning();
+    const [doc] = await db
+      .insert(documents)
+      .values({
+        patientId,
+        uploaderId,
+        uploadSource: uploadSource as "patient-uploaded" | "facility-verified",
+        documentType: documentType as
+          "scan" | "lab" | "prescription" | "vaccination" | "discharge",
+        storageKey: quarantineKey,
+        storageBucket: env.STORAGE_BUCKET_QUARANTINE,
+        mimeType: validated.mimeType,
+        fileSizeBytes: validated.fileSizeBytes,
+        status: "quarantined",
+        scanStatus: "pending",
+        documentDate: documentDate ?? null,
+        facilityId: facilityId ?? null,
+        notes: notes ?? null,
+      })
+      .returning();
 
     await db.insert(documentCryptoKeys).values({
       documentId: doc.id,
@@ -265,7 +288,10 @@ export class VaultService {
     });
 
     // 6. Create FHIR DocumentReference
-    const { fhirId, resource } = this.fhirMapper.map(doc, encrypted.sha256Plaintext);
+    const { fhirId, resource } = this.fhirMapper.map(
+      doc,
+      encrypted.sha256Plaintext,
+    );
     await db.insert(fhirDocumentReferences).values({
       documentId: doc.id,
       fhirId,
@@ -303,7 +329,7 @@ export class VaultService {
     documentId: string,
     actorId: string,
     actorRole: string,
-    ipHash: string
+    ipHash: string,
   ): Promise<{
     url: string;
     expiresAt: Date;
@@ -319,7 +345,7 @@ export class VaultService {
     if (!doc) throw new NotFoundException("Document not found");
     if (doc.status !== "ready") {
       throw new BadRequestException(
-        `Document is not available for viewing (status: ${doc.status})`
+        `Document is not available for viewing (status: ${doc.status})`,
       );
     }
 
@@ -328,38 +354,36 @@ export class VaultService {
         ? await findActiveConsentRequestId(
             doc.patientId,
             actorId,
-            `document:${doc.documentType}`
+            `document:${doc.documentType}`,
           )
         : undefined;
     if (actorRole === "clinician" && !requestId) {
       throw new ForbiddenException("No active consent covers this record");
     }
 
-    const notificationDeliveries = await db.transaction(
-      async (transaction) => {
-        await this.audit.logInTransaction(
-          {
-            actorId,
-            actorRole,
-            action: "DOCUMENT_VIEWED",
-            resourceType: "document",
-            resourceId: documentId,
-            outcome: "SUCCESS",
-            ipHash,
-          },
-          transaction
-        );
-        const notificationDeliveries = requestId
-          ? await this.notifications.recordForPatientAndGuardians(
-              doc.patientId,
-              "DOCUMENT_READ",
-              requestId,
-              transaction
-            )
-          : [];
-        return notificationDeliveries;
-      }
-    );
+    const notificationDeliveries = await db.transaction(async (transaction) => {
+      await this.audit.logInTransaction(
+        {
+          actorId,
+          actorRole,
+          action: "DOCUMENT_VIEWED",
+          resourceType: "document",
+          resourceId: documentId,
+          outcome: "SUCCESS",
+          ipHash,
+        },
+        transaction,
+      );
+      const notificationDeliveries = requestId
+        ? await this.notifications.recordForPatientAndGuardians(
+            doc.patientId,
+            "DOCUMENT_READ",
+            requestId,
+            transaction,
+          )
+        : [];
+      return notificationDeliveries;
+    });
     await this.notifications.deliverDevelopmentEmails(notificationDeliveries);
 
     // Generate the URL only after the audit transaction commits.
@@ -367,14 +391,17 @@ export class VaultService {
       doc.storageBucket,
       doc.storageKey,
       "document", // never expose real filename
-      doc.mimeType
+      doc.mimeType,
     );
 
     return {
       url,
       expiresAt,
       expiresInSeconds: PRESIGNED_URL_EXPIRY_SECONDS,
-      sourceLabel: doc.uploadSource === "facility-verified" ? "verified-source" : "patient-uploaded",
+      sourceLabel:
+        doc.uploadSource === "facility-verified"
+          ? "verified-source"
+          : "patient-uploaded",
     };
   }
 
@@ -389,7 +416,7 @@ export class VaultService {
     actorId: string,
     actorRole: string,
     ipHash: string,
-    purpose: string = "clinical-care"
+    purpose: string = "clinical-care",
   ): Promise<{
     buffer: Buffer;
     mimeType: StreamContentType;
@@ -405,7 +432,7 @@ export class VaultService {
     if (!doc) throw new NotFoundException("Document not found");
     if (doc.status !== "ready") {
       throw new BadRequestException(
-        `Document is not available for viewing (status: ${doc.status})`
+        `Document is not available for viewing (status: ${doc.status})`,
       );
     }
     const mimeType = getStreamContentType(doc.mimeType);
@@ -415,42 +442,43 @@ export class VaultService {
         ? await findActiveConsentRequestId(
             doc.patientId,
             actorId,
-            `document:${doc.documentType}`
+            `document:${doc.documentType}`,
           )
         : undefined;
     if (actorRole === "clinician" && !requestId) {
       throw new ForbiddenException("No active consent covers this record");
     }
 
-    const notificationDeliveries = await db.transaction(
-      async (transaction) => {
-        await this.audit.logInTransaction(
-          {
-            actorId,
-            actorRole,
-            action: "DOCUMENT_VIEWED",
-            resourceType: "document",
-            resourceId: documentId,
-            outcome: "SUCCESS",
-            ipHash,
-          },
-          transaction
-        );
-        const notificationDeliveries = requestId
-          ? await this.notifications.recordForPatientAndGuardians(
-              doc.patientId,
-              "DOCUMENT_READ",
-              requestId,
-              transaction
-            )
-          : [];
-        return notificationDeliveries;
-      }
-    );
+    const notificationDeliveries = await db.transaction(async (transaction) => {
+      await this.audit.logInTransaction(
+        {
+          actorId,
+          actorRole,
+          action: "DOCUMENT_VIEWED",
+          resourceType: "document",
+          resourceId: documentId,
+          outcome: "SUCCESS",
+          ipHash,
+        },
+        transaction,
+      );
+      const notificationDeliveries = requestId
+        ? await this.notifications.recordForPatientAndGuardians(
+            doc.patientId,
+            "DOCUMENT_READ",
+            requestId,
+            transaction,
+          )
+        : [];
+      return notificationDeliveries;
+    });
     await this.notifications.deliverDevelopmentEmails(notificationDeliveries);
 
     // 1. Fetch encrypted ciphertext only after the audit transaction commits.
-    const ciphertext = await this.storage.getObject(doc.storageBucket, doc.storageKey);
+    const ciphertext = await this.storage.getObject(
+      doc.storageBucket,
+      doc.storageKey,
+    );
 
     // 2. Fetch envelope crypto keys
     const [cryptoKey] = await db
@@ -478,7 +506,10 @@ export class VaultService {
     return {
       buffer: plaintext,
       mimeType,
-      sourceLabel: doc.uploadSource === "facility-verified" ? "verified-source" : "patient-uploaded",
+      sourceLabel:
+        doc.uploadSource === "facility-verified"
+          ? "verified-source"
+          : "patient-uploaded",
       patientId: doc.patientId,
     };
   }
@@ -499,35 +530,39 @@ export class VaultService {
         scanStatus: documents.scanStatus,
         documentDate: documents.documentDate,
         createdAt: documents.createdAt,
+        emergencyVisible: documents.emergencyVisible,
       })
       .from(documents)
       .where(
-        and(
-          eq(documents.patientId, patientId),
-          isNull(documents.deletedAt)
-        )
+        and(eq(documents.patientId, patientId), isNull(documents.deletedAt)),
       )
       .orderBy(desc(documents.documentDate), desc(documents.createdAt));
 
-    return groupTimelineDocuments(rows.map((row) => ({
+    return groupTimelineDocuments(
+      rows.map((row) => ({
         id: row.id,
         documentType: row.documentType as DocumentType,
         uploadSource: row.uploadSource as UploadSource,
-        sourceLabel: row.uploadSource === "facility-verified" ? "verified-source" : "patient-uploaded",
+        sourceLabel:
+          row.uploadSource === "facility-verified"
+            ? "verified-source"
+            : "patient-uploaded",
         mimeType: row.mimeType,
         fileSizeBytes: row.fileSizeBytes,
         status: row.status,
         scanStatus: row.scanStatus,
         documentDate: row.documentDate,
         createdAt: row.createdAt,
-      })));
+        emergencyVisible: row.emergencyVisible,
+      })),
+    );
   }
 
   async getRequestTimeline(
     requestId: string,
     clinicianUserId: string,
     clinicianRole: string,
-    ipHash: string
+    ipHash: string,
   ): Promise<{
     groups: TimelineGroup[];
     consent: { scope: string[]; purpose: string; expiresAt: string };
@@ -552,8 +587,8 @@ export class VaultService {
             eq(accessRequests.status, "approved"),
             eq(consents.granteeUserId, clinicianUserId),
             eq(consents.status, "active"),
-            gt(consents.expiresAt, new Date())
-          )
+            gt(consents.expiresAt, new Date()),
+          ),
         )
         .limit(1)
         .for("share");
@@ -571,7 +606,7 @@ export class VaultService {
           outcome: "SUCCESS",
           ipHash,
         },
-        transaction
+        transaction,
       );
 
       const rows = await transaction
@@ -591,8 +626,8 @@ export class VaultService {
           and(
             eq(documents.patientId, context.patientId),
             eq(documents.status, "ready"),
-            isNull(documents.deletedAt)
-          )
+            isNull(documents.deletedAt),
+          ),
         )
         .orderBy(desc(documents.documentDate), desc(documents.createdAt));
       return { context, rows };
@@ -604,7 +639,7 @@ export class VaultService {
       .filter(
         (row) =>
           context.scope.includes("timeline") ||
-          context.scope.includes(`document:${row.documentType}`)
+          context.scope.includes(`document:${row.documentType}`),
       )
       .map((row): TimelineDocument => ({
         id: row.id,
@@ -633,7 +668,11 @@ export class VaultService {
   }
 
   /** Get a single document record (for policy checks — returns minimal info) */
-  async findById(documentId: string): Promise<{ patientId: string; uploadSource: string; status: string } | null> {
+  async findById(documentId: string): Promise<{
+    patientId: string;
+    uploadSource: string;
+    status: string;
+  } | null> {
     const [doc] = await db
       .select({
         patientId: documents.patientId,

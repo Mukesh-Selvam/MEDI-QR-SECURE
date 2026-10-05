@@ -45,6 +45,7 @@ let clinicianDatabaseId: string;
 let clinicianTotpSecret = "";
 const patientUserIds = new Set<string>();
 const patientDatabaseIds = new Set<string>();
+const emergencyVisibleDocumentIds = new Set<string>();
 
 test.describe("browser authentication", () => {
   test.beforeAll(async () => {
@@ -57,6 +58,19 @@ test.describe("browser authentication", () => {
   });
 
   test.afterAll(async () => {
+    if (emergencyVisibleDocumentIds.size) {
+      const connection = await createDatabaseClient();
+      try {
+        await connection.connect();
+        for (const documentId of emergencyVisibleDocumentIds) {
+          await connection.query("DELETE FROM documents WHERE id = $1", [
+            documentId,
+          ]);
+        }
+      } finally {
+        await connection.end();
+      }
+    }
     if (patientDatabaseIds.size || patientUserIds.size) {
       const connection = await createDatabaseClient();
       try {
@@ -64,7 +78,7 @@ test.describe("browser authentication", () => {
         for (const patientDatabaseId of patientDatabaseIds) {
           await connection.query(
             "DELETE FROM emergency_profiles WHERE patient_id = $1",
-            [patientDatabaseId]
+            [patientDatabaseId],
           );
         }
         for (const patientUserId of patientUserIds) {
@@ -72,7 +86,7 @@ test.describe("browser authentication", () => {
             `UPDATE users
              SET status = 'suspended', phone = NULL, email = NULL, keycloak_id = NULL
              WHERE id = $1`,
-            [patientUserId]
+            [patientUserId],
           );
         }
       } finally {
@@ -85,13 +99,13 @@ test.describe("browser authentication", () => {
       try {
         await connection.connect();
         await connection.query("DELETE FROM clinicians WHERE user_id = $1", [
-          clinicianDatabaseId
+          clinicianDatabaseId,
         ]);
         await connection.query(
           `UPDATE users
            SET status = 'suspended', phone = NULL, email = NULL, keycloak_id = NULL
            WHERE id = $1`,
-          [clinicianDatabaseId]
+          [clinicianDatabaseId],
         );
       } finally {
         await connection.end();
@@ -101,13 +115,13 @@ test.describe("browser authentication", () => {
     if (adminToken && clinicianKeycloakId) {
       await keycloakRequest(
         `/admin/realms/${realm}/users/${clinicianKeycloakId}`,
-        { method: "DELETE" }
+        { method: "DELETE" },
       );
     }
   });
 
   test("patient completes OTP sign-in using a fake number", async ({
-    page
+    page,
   }) => {
     const phone = `+919${randomBytes(4).readUInt32BE(0).toString().padStart(10, "0").slice(-9)}`;
     await page.goto("/login/patient");
@@ -120,7 +134,7 @@ test.describe("browser authentication", () => {
     await otpInput.fill(otp);
     await page.getByRole("button", { name: "Verify & Sign In" }).click();
     await expect(
-      page.getByText("Authenticated (Session Active)")
+      page.getByText("Authenticated (Session Active)"),
     ).toBeVisible();
     await expect(page.getByText("Role: patient")).toBeVisible();
     const profileResponse = await page.request.get("/api/v1/auth/me");
@@ -132,7 +146,7 @@ test.describe("browser authentication", () => {
     patientUserIds.add(profile.id);
     expect(profile.patientId).not.toBeNull();
     expect(profile.patientId).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
     if (!profile.patientId) {
       throw new Error("OTP login did not return a patient profile.");
@@ -141,10 +155,10 @@ test.describe("browser authentication", () => {
 
     await page.goto("/patient/emergency");
     await expect(
-      page.getByRole("heading", { name: "Emergency details" })
+      page.getByRole("heading", { name: "Emergency details" }),
     ).toBeVisible();
     const emergencyOptIn = page.getByRole("checkbox", {
-      name: /Allow emergency access to these details/
+      name: /Allow emergency access to these details/,
     });
     await expect(emergencyOptIn).not.toBeChecked();
     await page.getByLabel("Allergies").fill("FAKE E2E declared allergy");
@@ -159,55 +173,105 @@ test.describe("browser authentication", () => {
     await expect(
       page
         .getByRole("status")
-        .getByText("Your emergency details have been saved.")
+        .getByText("Your emergency details have been saved."),
     ).toBeVisible();
     await emergencyOptIn.uncheck();
     await page.getByRole("button", { name: "Save emergency details" }).click();
     await expect(
       page
         .getByRole("status")
-        .getByText("Your emergency details have been saved.")
+        .getByText("Your emergency details have been saved."),
     ).toBeVisible();
+
+    const documentId = randomUUID();
+    const documentDate = new Date("2026-10-04T00:00:00.000Z");
+    const connection = await createDatabaseClient();
+    try {
+      await connection.connect();
+      await connection.query(
+        `INSERT INTO documents (
+           id, patient_id, uploader_id, upload_source, document_type,
+           storage_key, storage_bucket, mime_type, file_size_bytes, status,
+           scan_status, document_date
+         ) VALUES (
+           $1, $2, $3, 'patient-uploaded', 'prescription',
+           $4, 'fake-bucket', 'application/pdf', 12, 'ready',
+           'clean', $5
+         )`,
+        [documentId, profile.patientId, profile.id, randomUUID(), documentDate],
+      );
+      emergencyVisibleDocumentIds.add(documentId);
+    } finally {
+      await connection.end();
+    }
+    await page.goto("/vault/timeline");
+    await expect(
+      page.getByRole("heading", { name: "My Medical Records" }),
+    ).toBeVisible();
+    const emergencyVisibility = page.getByRole("checkbox", {
+      name: /Show prescription dated/,
+    });
+    await expect(emergencyVisibility).toBeVisible();
+    await expect(emergencyVisibility).not.toBeChecked();
+    const visibilityUpdate = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PATCH" &&
+        response
+          .url()
+          .includes(
+            `/api/v1/emergency-access/documents/${documentId}/visibility`,
+          ),
+    );
+    await emergencyVisibility.click();
+    const visibilityResponse = await visibilityUpdate;
+    expect(visibilityResponse.status(), await visibilityResponse.text()).toBe(
+      200,
+    );
+    await expect(emergencyVisibility).toBeChecked();
+    await page.reload();
+    await expect(
+      page.getByRole("checkbox", { name: /Show prescription dated/ }),
+    ).toBeChecked();
 
     await page.goto("/patient/notifications");
     await expect(
-      page.getByRole("heading", { name: "Notifications" })
+      page.getByRole("heading", { name: "Notifications" }),
     ).toBeVisible();
     await expect(
-      page.getByText("There are no notifications yet.")
+      page.getByText("There are no notifications yet."),
     ).toBeVisible();
   });
 
   test("emergency details stay unavailable when the account has no patient profile", async ({
-    page
+    page,
   }) => {
     await page.route("**/api/v1/auth/me", (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ patientId: null, role: "patient" })
-      })
+        body: JSON.stringify({ patientId: null, role: "patient" }),
+      }),
     );
     await page.route("**/api/v1/access/requests/inbox", (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ wards: [] })
-      })
+        body: JSON.stringify({ wards: [] }),
+      }),
     );
 
     await page.goto("/patient/emergency");
     await expect(page.locator("main p[role='alert']")).toContainText(
-      "No patient profile is available for this account."
+      "No patient profile is available for this account.",
     );
     await expect(page.locator("form")).toHaveCount(0);
     await expect(
-      page.getByRole("button", { name: "Save emergency details" })
+      page.getByRole("button", { name: "Save emergency details" }),
     ).toHaveCount(0);
   });
 
   test("clinician signs in through Keycloak but unverified access is denied", async ({
-    page
+    page,
   }) => {
     await page.goto("/login/clinician");
     await page
@@ -228,10 +292,10 @@ test.describe("browser authentication", () => {
         passwordFields: await page.locator("#password").count(),
         otpForms: await page.locator("#kc-otp-login-form").count(),
         invalidCredentials:
-          (await page.getByText("Invalid username or password").count()) > 0
+          (await page.getByText("Invalid username or password").count()) > 0,
       };
       throw new Error(
-        `Unexpected Keycloak MFA page: ${JSON.stringify(pageState)}`
+        `Unexpected Keycloak MFA page: ${JSON.stringify(pageState)}`,
       );
     }
     await page.locator("#mode-manual").click();
@@ -279,26 +343,26 @@ test.describe("browser authentication", () => {
               "isVerified" in sessionBody &&
               typeof sessionBody.isVerified === "boolean"
                 ? sessionBody.isVerified
-                : undefined
+                : undefined,
           }
         : { status: sessionResponse.status() };
     expect(sessionSummary).toEqual({
       status: 200,
       role: "clinician",
-      isVerified: false
+      isVerified: false,
     });
     await expect(
-      page.getByRole("heading", { name: "Pending verification" })
+      page.getByRole("heading", { name: "Pending verification" }),
     ).toBeVisible();
 
     const patientDataResponse = await page.request.get(
-      `/api/v1/patients/${randomUUID()}`
+      `/api/v1/patients/${randomUUID()}`,
     );
     expect(patientDataResponse.status()).toBe(403);
   });
 
   test("clinician scans, patient approves, reads a document, and revokes access", async ({
-    browser
+    browser,
   }, testInfo) => {
     if (!clinicianTotpSecret) {
       throw new Error("The seeded fake clinician MFA setup did not complete.");
@@ -310,7 +374,7 @@ test.describe("browser authentication", () => {
       await connection.query(
         `UPDATE clinicians SET is_verified = true, verified_at = now()
          WHERE user_id = $1`,
-        [clinicianDatabaseId]
+        [clinicianDatabaseId],
       );
     } finally {
       await connection.end();
@@ -328,7 +392,7 @@ test.describe("browser authentication", () => {
     await patientPage.locator('input[placeholder="123456"]').fill(patientOtp);
     await patientPage.getByRole("button", { name: "Verify & Sign In" }).click();
     await expect(
-      patientPage.getByText("Authenticated (Session Active)")
+      patientPage.getByText("Authenticated (Session Active)"),
     ).toBeVisible();
 
     const profileResponse = await patientPage.request.get("/api/v1/auth/me");
@@ -354,7 +418,7 @@ test.describe("browser authentication", () => {
     const credentialResponsePromise = patientPage.waitForResponse(
       (response) =>
         response.url().includes("/api/v1/qr/credentials") &&
-        response.request().method() === "POST"
+        response.request().method() === "POST",
     );
     await patientPage
       .getByRole("button", { name: "Create printed QR" })
@@ -385,22 +449,22 @@ test.describe("browser authentication", () => {
         form.append(
           "file",
           new File([pdfContent], "fake-lab.pdf", {
-            type: "application/pdf"
-          })
+            type: "application/pdf",
+          }),
         );
         const response = await fetch("/api/v1/vault/upload", {
           method: "POST",
           headers: {
             "x-csrf-token": csrfToken,
-            "x-mediqr-patient-id": patientId
+            "x-mediqr-patient-id": patientId,
           },
           body: form,
-          cache: "no-store"
+          cache: "no-store",
         });
         const body: unknown = await response.json();
         return { status: response.status, body };
       },
-      { patientId: patientRecordId, pdfContent: createMinimalTestPdf() }
+      { patientId: patientRecordId, pdfContent: createMinimalTestPdf() },
     );
     if (uploadResult.status !== 202) {
       throw new Error("The fake record could not be staged for scanning.");
@@ -418,7 +482,7 @@ test.describe("browser authentication", () => {
     await expect
       .poll(async () => {
         const response = await patientPage.request.get(
-          `/api/v1/vault/${uploadedDocumentId}/status`
+          `/api/v1/vault/${uploadedDocumentId}/status`,
         );
         if (!response.ok()) return "unavailable";
         const state = (await response.json()) as { status?: string };
@@ -437,7 +501,7 @@ test.describe("browser authentication", () => {
     await clinicianPage.locator("#kc-login").click();
     await clinicianPage.locator("#kc-otp-login-form").waitFor({
       state: "visible",
-      timeout: 15_000
+      timeout: 15_000,
     });
     await waitForNextTotpWindow();
     await clinicianPage.locator("#otp").fill(generateTotp(clinicianTotpSecret));
@@ -445,10 +509,10 @@ test.describe("browser authentication", () => {
     await expect(clinicianPage).toHaveURL(/\/login\/clinician\?auth=success/);
 
     await clinicianPage.goto(
-      `/request-access/#credential=${encodeURIComponent(credential.credentialToken)}`
+      `/request-access/#credential=${encodeURIComponent(credential.credentialToken)}`,
     );
     await expect(
-      clinicianPage.getByRole("checkbox", { name: "Laboratory results" })
+      clinicianPage.getByRole("checkbox", { name: "Laboratory results" }),
     ).toBeVisible({ timeout: 15_000 });
     await clinicianPage
       .getByRole("checkbox", { name: "Laboratory results" })
@@ -456,7 +520,7 @@ test.describe("browser authentication", () => {
     const accessRequestResponsePromise = clinicianPage.waitForResponse(
       (response) =>
         response.url().includes("/api/v1/access/requests") &&
-        response.request().method() === "POST"
+        response.request().method() === "POST",
     );
     await clinicianPage
       .getByRole("button", { name: "Send request to patient" })
@@ -472,7 +536,7 @@ test.describe("browser authentication", () => {
           ? failure.message
           : "No public error detail was returned.";
       throw new Error(
-        `The access request failed with HTTP ${accessRequestResponse.status()}: ${message}`
+        `The access request failed with HTTP ${accessRequestResponse.status()}: ${message}`,
       );
     }
     const accessRequestBody = (await accessRequestResponse.json()) as {
@@ -483,38 +547,38 @@ test.describe("browser authentication", () => {
     }
     await expect(
       clinicianPage.getByText(
-        "Request sent. Waiting for the patient to review it."
-      )
+        "Request sent. Waiting for the patient to review it.",
+      ),
     ).toBeVisible();
 
     await patientPage.goto("/patient/access");
     await expect(
-      patientPage.getByRole("heading", { name: "Review this request" })
+      patientPage.getByRole("heading", { name: "Review this request" }),
     ).toBeVisible();
     await expect(
-      patientPage.getByText("Laboratory results", { exact: true })
+      patientPage.getByText("Laboratory results", { exact: true }),
     ).toBeVisible();
     await expect(patientPage.getByText(/access lasts 24 hours/i)).toBeVisible();
     await patientPage.getByRole("button", { name: "Approve access" }).click();
     await expect(
-      patientPage.getByRole("status").filter({ hasText: "Access approved" })
+      patientPage.getByRole("status").filter({ hasText: "Access approved" }),
     ).toBeVisible();
     await patientPage.screenshot({
       path: testInfo.outputPath("consent-flow-approved.png"),
-      fullPage: true
+      fullPage: true,
     });
 
     const consoleStatusResponsePromise = clinicianPage.waitForResponse(
       (response) =>
         response.url().includes("/api/v1/access/requests/") &&
         response.url().endsWith("/status") &&
-        response.request().method() === "GET"
+        response.request().method() === "GET",
     );
     const consoleTimelineResponsePromise = clinicianPage.waitForResponse(
       (response) =>
         response.url().includes("/api/v1/vault/requests/") &&
         response.url().endsWith("/timeline") &&
-        response.request().method() === "GET"
+        response.request().method() === "GET",
     );
     await clinicianPage
       .getByRole("link", { name: "Open clinician records console" })
@@ -529,11 +593,11 @@ test.describe("browser authentication", () => {
         typeof failure.message === "string"
           ? failure.message.replace(
               /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
-              "[opaque id]"
+              "[opaque id]",
             )
           : "No public error detail was returned.";
       throw new Error(
-        `The clinician status check returned HTTP ${consoleStatusResponse.status()}: ${publicMessage}`
+        `The clinician status check returned HTTP ${consoleStatusResponse.status()}: ${publicMessage}`,
       );
     }
     expect(consoleStatusResponse.status()).toBe(200);
@@ -541,12 +605,12 @@ test.describe("browser authentication", () => {
     expect(consoleTimelineResponse.status()).toBe(200);
     await expect(
       clinicianPage.getByRole("heading", {
-        name: "Consent-scoped record view"
-      })
+        name: "Consent-scoped record view",
+      }),
     ).toBeVisible();
     await expect(clinicianPage.getByText("Access is active")).toBeVisible();
     await expect(
-      clinicianPage.getByRole("heading", { name: "Laboratory records" })
+      clinicianPage.getByRole("heading", { name: "Laboratory records" }),
     ).toBeVisible();
     await clinicianPage
       .getByRole("region", { name: "Record timeline" })
@@ -554,17 +618,17 @@ test.describe("browser authentication", () => {
       .click();
     await expect(
       clinicianPage.locator(
-        'section[aria-label="Read-only secure record viewer"] canvas'
-      )
+        'section[aria-label="Read-only secure record viewer"] canvas',
+      ),
     ).toBeVisible({
-      timeout: 15_000
+      timeout: 15_000,
     });
     await expect(
-      clinicianPage.getByRole("button", { name: /download/i })
+      clinicianPage.getByRole("button", { name: /download/i }),
     ).toHaveCount(0);
 
     const firstRead = await clinicianPage.request.get(
-      `/api/v1/vault/${uploadedDocumentId}/stream`
+      `/api/v1/vault/${uploadedDocumentId}/stream`,
     );
     expect(firstRead.status()).toBe(200);
     expect(firstRead.headers()["content-type"]).toContain("application/pdf");
@@ -572,18 +636,18 @@ test.describe("browser authentication", () => {
 
     await patientPage.getByRole("button", { name: "End this access" }).click();
     await expect(
-      patientPage.getByRole("status").filter({ hasText: "Access ended" })
+      patientPage.getByRole("status").filter({ hasText: "Access ended" }),
     ).toBeVisible();
     await expect(
       clinicianPage
         .getByRole("alert")
-        .filter({ hasText: "Consent has been revoked" })
+        .filter({ hasText: "Consent has been revoked" }),
     ).toBeVisible({
-      timeout: 10_000
+      timeout: 10_000,
     });
     await patientPage.screenshot({
       path: testInfo.outputPath("consent-flow-revoked.png"),
-      fullPage: true
+      fullPage: true,
     });
 
     function createMinimalTestPdf(): string {
@@ -593,7 +657,7 @@ test.describe("browser authentication", () => {
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 180] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}endstream`
+        `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}endstream`,
       ];
       let document = "%PDF-1.4\n";
       const offsets: number[] = [];
@@ -613,7 +677,7 @@ test.describe("browser authentication", () => {
     }
 
     const readAfterRevocation = await clinicianPage.request.get(
-      `/api/v1/vault/${uploadedDocumentId}/stream`
+      `/api/v1/vault/${uploadedDocumentId}/stream`,
     );
     expect(readAfterRevocation.status()).toBe(403);
     const historyText = await patientPage
@@ -624,7 +688,7 @@ test.describe("browser authentication", () => {
     expect(historyText).toContain("viewed a laboratory record");
     expect(historyText).toContain("ended access");
     expect(historyText).not.toMatch(
-      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
     );
     expect(historyText).not.toContain("fake-lab.pdf");
     await expectCliToDetectAuditTampering(accessRequestBody.requestId);
@@ -634,7 +698,7 @@ test.describe("browser authentication", () => {
 });
 
 async function expectCliToDetectAuditTampering(
-  requestId: string
+  requestId: string,
 ): Promise<void> {
   const connection = await createDatabaseClient();
   let auditEventId: string | undefined;
@@ -654,7 +718,7 @@ async function expectCliToDetectAuditTampering(
          AND action = 'DOCUMENT_TIMELINE_VIEWED'
        ORDER BY event_index DESC
        LIMIT 1`,
-      [requestId]
+      [requestId],
     );
     auditEventId = event.rows[0]?.id;
     originalAction = event.rows[0]?.action;
@@ -666,7 +730,7 @@ async function expectCliToDetectAuditTampering(
     await connection.query("ALTER TABLE audit_events DISABLE TRIGGER USER");
     await connection.query(
       "UPDATE audit_events SET action = 'AUDIT_CHAIN_TAMPER_TEST' WHERE id = $1",
-      [auditEventId]
+      [auditEventId],
     );
     await connection.query("ALTER TABLE audit_events ENABLE TRIGGER USER");
     await connection.query("COMMIT");
@@ -679,8 +743,8 @@ async function expectCliToDetectAuditTampering(
         cwd: resolve(process.cwd(), "../.."),
         encoding: "utf8",
         shell: process.platform === "win32",
-        timeout: 60_000
-      }
+        timeout: 60_000,
+      },
     );
     const verifierOutput = `${verifier.stdout ?? ""}${verifier.stderr ?? ""}`;
     if (
@@ -689,7 +753,7 @@ async function expectCliToDetectAuditTampering(
       !verifierOutput.includes("Audit chain verification failed")
     ) {
       throw new Error(
-        "The audit verifier CLI did not detect the tampered row."
+        "The audit verifier CLI did not detect the tampered row.",
       );
     }
   } finally {
@@ -698,7 +762,7 @@ async function expectCliToDetectAuditTampering(
       await connection.query("ALTER TABLE audit_events DISABLE TRIGGER USER");
       await connection.query(
         "UPDATE audit_events SET action = $1 WHERE id = $2",
-        [originalAction, auditEventId]
+        [originalAction, auditEventId],
       );
       await connection.query("ALTER TABLE audit_events ENABLE TRIGGER USER");
       await connection.query("COMMIT");
@@ -717,9 +781,9 @@ async function getKeycloakAdminToken(): Promise<string> {
         grant_type: "password",
         client_id: "admin-cli",
         username: adminUsername,
-        password: adminPassword!
-      })
-    }
+        password: adminPassword!,
+      }),
+    },
   );
   if (!response.ok)
     throw new Error("Could not authenticate the browser-test administrator.");
@@ -733,15 +797,15 @@ async function createFakeClinician(): Promise<string> {
       username: clinicianUsername,
       email: clinicianEmail,
       enabled: true,
-      emailVerified: true
-    })
+      emailVerified: true,
+    }),
   });
   if (createResponse.status !== 201) {
     throw new Error("Could not create the fake Keycloak clinician.");
   }
 
   const searchResponse = await keycloakRequest(
-    `/admin/realms/${realm}/users?username=${encodeURIComponent(clinicianUsername)}&exact=true`
+    `/admin/realms/${realm}/users?username=${encodeURIComponent(clinicianUsername)}&exact=true`,
   );
   const users = (await searchResponse.json()) as KeycloakUser[];
   const user = users[0];
@@ -751,7 +815,7 @@ async function createFakeClinician(): Promise<string> {
   }
 
   const roleResponse = await keycloakRequest(
-    `/admin/realms/${realm}/roles/clinician`
+    `/admin/realms/${realm}/roles/clinician`,
   );
   const role = (await roleResponse.json()) as KeycloakRole;
   if (!roleResponse.ok)
@@ -760,8 +824,8 @@ async function createFakeClinician(): Promise<string> {
     `/admin/realms/${realm}/users/${id}/role-mappings/realm`,
     {
       method: "POST",
-      body: JSON.stringify([role])
-    }
+      body: JSON.stringify([role]),
+    },
   );
   if (mappingResponse.status !== 204) {
     throw new Error("Could not assign the fake clinician realm role.");
@@ -774,9 +838,9 @@ async function createFakeClinician(): Promise<string> {
       body: JSON.stringify({
         type: "password",
         value: clinicianPassword,
-        temporary: false
-      })
-    }
+        temporary: false,
+      }),
+    },
   );
   if (passwordResponse.status !== 204) {
     throw new Error("Could not set the fake clinician test credential.");
@@ -788,9 +852,9 @@ async function createFakeClinician(): Promise<string> {
       method: "PUT",
       body: JSON.stringify({
         ...user,
-        requiredActions: ["CONFIGURE_TOTP"]
-      })
-    }
+        requiredActions: ["CONFIGURE_TOTP"],
+      }),
+    },
   );
   if (setupMfaResponse.status !== 204) {
     throw new Error("Could not require MFA setup for the fake clinician.");
@@ -806,7 +870,7 @@ async function seedUnverifiedClinician(): Promise<string> {
       `INSERT INTO users (keycloak_id, email, role, status)
        VALUES ($1, $2, 'clinician', 'active')
        RETURNING id`,
-      [clinicianKeycloakId, clinicianEmail]
+      [clinicianKeycloakId, clinicianEmail],
     );
     const id = result.rows[0]?.id;
     if (!id) throw new Error("Could not seed the fake clinician account.");
@@ -814,7 +878,7 @@ async function seedUnverifiedClinician(): Promise<string> {
       `INSERT INTO clinicians
          (user_id, full_name, registration_number, state_medical_council, is_verified)
        VALUES ($1, $2, $3, $4, false)`,
-      [id, "Fake E2E Clinician", `E2E-${testSuffix}`, "Fake Test Council"]
+      [id, "Fake E2E Clinician", `E2E-${testSuffix}`, "Fake Test Council"],
     );
     return id;
   } finally {
@@ -828,37 +892,37 @@ async function createDatabaseClient(): Promise<Client> {
     port: Number(process.env.DB_PORT ?? "5432"),
     database: process.env.DB_NAME,
     user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD
+    password: process.env.DB_PASSWORD,
   });
 }
 
 async function keycloakRequest(
   path: string,
-  init: RequestInit = {}
+  init: RequestInit = {},
 ): Promise<Response> {
   return fetch(`${keycloakBaseUrl}${path}`, {
     ...init,
     headers: {
       authorization: `Bearer ${adminToken}`,
       ...(init.body ? { "content-type": "application/json" } : {}),
-      ...init.headers
-    }
+      ...init.headers,
+    },
   });
 }
 
 async function readOtpFromMailpit(phone: string): Promise<string> {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const listResponse = await fetch(
-      "http://127.0.0.1:8025/api/v1/messages?limit=50"
+      "http://127.0.0.1:8025/api/v1/messages?limit=50",
     );
     if (listResponse.ok) {
       const list = (await listResponse.json()) as MailpitMessages;
       const message = list.messages.find((entry) =>
-        entry.Subject.includes(phone)
+        entry.Subject.includes(phone),
       );
       if (message) {
         const detailResponse = await fetch(
-          `http://127.0.0.1:8025/api/v1/message/${encodeURIComponent(message.ID)}`
+          `http://127.0.0.1:8025/api/v1/message/${encodeURIComponent(message.ID)}`,
         );
         if (detailResponse.ok) {
           const detail = (await detailResponse.json()) as MailpitMessage;
@@ -890,7 +954,7 @@ function generateTotp(base32Secret: string): string {
 async function waitForNextTotpWindow(): Promise<void> {
   const elapsedInWindow = Date.now() % 30_000;
   await new Promise((resolve) =>
-    setTimeout(resolve, 30_000 - elapsedInWindow + 1_000)
+    setTimeout(resolve, 30_000 - elapsedInWindow + 1_000),
   );
 }
 

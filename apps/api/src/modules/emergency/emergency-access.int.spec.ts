@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Logger } from "@nestjs/common";
 import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createRedisClient } from "../../config/redis.config.js";
@@ -57,6 +58,7 @@ describe("Emergency access grants and summaries (integration)", () => {
   let guardianPatientId: string;
   let edFacilityId: string;
   let pharmacyFacilityId: string;
+  let prescriptionDocumentIds: string[] = [];
   const requestIds: string[] = [];
   const documentPatientIds: string[] = [];
   const additionalPatientIds: string[] = [];
@@ -64,7 +66,8 @@ describe("Emergency access grants and summaries (integration)", () => {
 
   const makeActor = (
     id: string,
-    role: "emergency-department-staff" | "pharmacy-staff" | "patient",
+    role:
+      "emergency-department-staff" | "pharmacy-staff" | "patient" | "guardian",
   ): AuthenticatedUser => ({ id, sub: id, role });
 
   async function createResolution(
@@ -214,50 +217,68 @@ describe("Emergency access grants and summaries (integration)", () => {
       updatedByUserId: patientUserId,
     });
 
-    await db.insert(documents).values([
-      {
-        patientId,
-        uploaderId: patientUserId,
-        uploadSource: "patient-uploaded",
-        documentType: "prescription",
-        storageKey: `fake-emergency-doc-${randomUUID()}`,
-        storageBucket: "fake-bucket",
-        mimeType: "application/pdf",
-        fileSizeBytes: 12,
-        status: "ready",
-        scanStatus: "clean",
-        documentDate: new Date("2025-01-02T00:00:00.000Z"),
-        emergencyVisible: true,
-      },
-      {
-        patientId,
-        uploaderId: patientUserId,
-        uploadSource: "patient-uploaded",
-        documentType: "prescription",
-        storageKey: `fake-emergency-doc-${randomUUID()}`,
-        storageBucket: "fake-bucket",
-        mimeType: "application/pdf",
-        fileSizeBytes: 12,
-        status: "ready",
-        scanStatus: "clean",
-        documentDate: new Date("2025-02-03T00:00:00.000Z"),
-        emergencyVisible: false,
-      },
-      {
-        patientId,
-        uploaderId: patientUserId,
-        uploadSource: "patient-uploaded",
-        documentType: "prescription",
-        storageKey: `fake-emergency-doc-${randomUUID()}`,
-        storageBucket: "fake-bucket",
-        mimeType: "application/pdf",
-        fileSizeBytes: 12,
-        status: "quarantined",
-        scanStatus: "pending",
-        documentDate: new Date("2025-03-04T00:00:00.000Z"),
-        emergencyVisible: true,
-      },
-    ]);
+    const documentRecords = await db
+      .insert(documents)
+      .values([
+        ...Array.from({ length: 6 }, (_, index) => ({
+          patientId,
+          uploaderId: patientUserId,
+          uploadSource: "patient-uploaded" as const,
+          documentType: "prescription" as const,
+          storageKey: `fake-emergency-doc-${randomUUID()}`,
+          storageBucket: "fake-bucket",
+          mimeType: "application/pdf",
+          fileSizeBytes: 12,
+          status: "ready" as const,
+          scanStatus: "clean" as const,
+          documentDate: new Date(Date.UTC(2025, index, 10)),
+        })),
+        {
+          patientId,
+          uploaderId: patientUserId,
+          uploadSource: "patient-uploaded",
+          documentType: "prescription",
+          storageKey: `fake-emergency-doc-${randomUUID()}`,
+          storageBucket: "fake-bucket",
+          mimeType: "application/pdf",
+          fileSizeBytes: 12,
+          status: "ready",
+          scanStatus: "clean",
+          documentDate: new Date("2025-07-10T00:00:00.000Z"),
+        },
+        {
+          patientId,
+          uploaderId: patientUserId,
+          uploadSource: "patient-uploaded",
+          documentType: "prescription",
+          storageKey: `fake-emergency-doc-${randomUUID()}`,
+          storageBucket: "fake-bucket",
+          mimeType: "application/pdf",
+          fileSizeBytes: 12,
+          status: "quarantined",
+          scanStatus: "pending",
+          documentDate: new Date("2025-08-10T00:00:00.000Z"),
+          emergencyVisible: true,
+        },
+        {
+          patientId,
+          uploaderId: patientUserId,
+          uploadSource: "patient-uploaded",
+          documentType: "lab",
+          storageKey: `fake-emergency-doc-${randomUUID()}`,
+          storageBucket: "fake-bucket",
+          mimeType: "application/pdf",
+          fileSizeBytes: 12,
+          status: "ready",
+          scanStatus: "clean",
+          documentDate: new Date("2025-09-10T00:00:00.000Z"),
+          emergencyVisible: true,
+        },
+      ])
+      .returning({ id: documents.id, documentType: documents.documentType });
+    prescriptionDocumentIds = documentRecords
+      .filter(({ documentType }) => documentType === "prescription")
+      .map(({ id }) => id);
     documentPatientIds.push(patientId);
   });
 
@@ -321,6 +342,66 @@ describe("Emergency access grants and summaries (integration)", () => {
   });
 
   it("creates an audited fixed grant, notifies patient and guardian, and returns only eligible hospital metadata", async () => {
+    const defaultOffDocuments = await db
+      .select({
+        emergencyVisible: documents.emergencyVisible,
+      })
+      .from(documents)
+      .where(inArray(documents.id, prescriptionDocumentIds.slice(0, 6)));
+    expect(defaultOffDocuments).toHaveLength(6);
+    expect(
+      defaultOffDocuments.every(({ emergencyVisible }) => !emergencyVisible),
+    ).toBe(true);
+
+    for (const [index, documentId] of prescriptionDocumentIds
+      .slice(0, 6)
+      .entries()) {
+      await service.updatePrescriptionVisibility(
+        documentId,
+        { emergencyVisible: true },
+        index === 5
+          ? makeActor(guardianUserId, "guardian")
+          : makeActor(patientUserId, "patient"),
+        "127.0.0.1",
+      );
+    }
+    await service.updatePrescriptionVisibility(
+      prescriptionDocumentIds[0]!,
+      { emergencyVisible: false },
+      makeActor(patientUserId, "patient"),
+      "127.0.0.1",
+    );
+    await service.updatePrescriptionVisibility(
+      prescriptionDocumentIds[0]!,
+      { emergencyVisible: true },
+      makeActor(patientUserId, "patient"),
+      "127.0.0.1",
+    );
+
+    const visibilityEvents = await db
+      .select({
+        action: auditEvents.action,
+        resourceId: auditEvents.resourceId,
+      })
+      .from(auditEvents)
+      .where(
+        and(
+          inArray(auditEvents.resourceId, prescriptionDocumentIds.slice(0, 6)),
+          eq(auditEvents.action, "EMERGENCY_DOCUMENT_VISIBLE_FALSE_TO_TRUE"),
+        ),
+      );
+    expect(visibilityEvents).toHaveLength(7);
+    const disabledEvent = await db
+      .select({ action: auditEvents.action })
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.resourceId, prescriptionDocumentIds[0]!),
+          eq(auditEvents.action, "EMERGENCY_DOCUMENT_VISIBLE_TRUE_TO_FALSE"),
+        ),
+      );
+    expect(disabledEvent).toHaveLength(1);
+
     const resolutionId = await createResolution(patientUserId);
     const result = await service.createRequest(
       edFacilityId,
@@ -447,12 +528,51 @@ describe("Emergency access grants and summaries (integration)", () => {
         sentAt: null,
       })
       .where(eq(notificationEmailOutbox.id, expiredFinalAttemptId));
+    const operatorAlert = vi
+      .spyOn(Logger.prototype, "error")
+      .mockImplementation(() => undefined);
     await notificationsService.processPendingEmergencyEmails();
+    expect(operatorAlert).toHaveBeenCalledWith(
+      expect.stringContaining("retries exhausted"),
+    );
+    operatorAlert.mockRestore();
     const [exhaustedEmail] = await db
       .select({ failedAt: notificationEmailOutbox.failedAt })
       .from(notificationEmailOutbox)
       .where(eq(notificationEmailOutbox.id, expiredFinalAttemptId));
     expect(exhaustedEmail.failedAt).toBeInstanceOf(Date);
+    await notificationsService.processPendingEmergencyEmails();
+    expect(emailProvider.send).toHaveBeenCalledTimes(3);
+
+    const failingSummaryAudit = {
+      hashIp: vi.fn(() => "f".repeat(64)),
+      logInTransaction: vi
+        .fn()
+        .mockRejectedValue(new Error("summary audit unavailable")),
+    };
+    const serviceWithFailingSummaryAudit = new EmergencyAccessService(
+      failingSummaryAudit,
+      resolution,
+      notificationsService,
+      crypto,
+    );
+    await expect(
+      serviceWithFailingSummaryAudit.readSummary(
+        result.requestId,
+        makeActor(edStaffUserId, "emergency-department-staff"),
+        "127.0.0.1",
+      ),
+    ).rejects.toThrow("summary audit unavailable");
+    const failedSummaryAuditRows = await db
+      .select({ id: auditEvents.id })
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.resourceId, result.requestId),
+          eq(auditEvents.action, "EMERGENCY_SUMMARY_READ"),
+        ),
+      );
+    expect(failedSummaryAuditRows).toHaveLength(0);
 
     const summary = await service.readSummary(
       result.requestId,
@@ -467,8 +587,24 @@ describe("Emergency access grants and summaries (integration)", () => {
       emergencyContacts: [
         { name: "FAKE Contact", relationship: "relative", phone: "00000" },
       ],
-      prescriptions: [{ type: "prescription", date: "2025-01-02" }],
     });
+    expect(summary.expiresAt).toBe(result.expiresAt);
+    expect("prescriptions" in summary ? summary.prescriptions : []).toEqual([
+      { type: "prescription", date: "2025-06-10" },
+      { type: "prescription", date: "2025-05-10" },
+      { type: "prescription", date: "2025-04-10" },
+      { type: "prescription", date: "2025-03-10" },
+      { type: "prescription", date: "2025-02-10" },
+    ]);
+    if ("prescriptions" in summary) {
+      expect(summary.prescriptions).toHaveLength(5);
+      expect(
+        summary.prescriptions.every(
+          (prescription) =>
+            Object.keys(prescription).sort().join(",") === "date,type",
+        ),
+      ).toBe(true);
+    }
     expect(JSON.stringify(summary)).not.toContain("storageKey");
     expect(JSON.stringify(summary)).not.toContain("fake-emergency-doc");
 
@@ -507,6 +643,124 @@ describe("Emergency access grants and summaries (integration)", () => {
     ).toBe(true);
   });
 
+  it("rejects emergency visibility changes for non-prescriptions, unready records, and unrelated accounts", async () => {
+    const readyPrescriptionId = prescriptionDocumentIds[0]!;
+    const unreadyPrescriptionId = prescriptionDocumentIds[7]!;
+    await expect(
+      service.updatePrescriptionVisibility(
+        readyPrescriptionId,
+        { emergencyVisible: true },
+        makeActor(guardianUserId, "patient"),
+        "127.0.0.1",
+      ),
+    ).rejects.toThrow("Emergency document visibility unavailable.");
+    await expect(
+      service.updatePrescriptionVisibility(
+        unreadyPrescriptionId,
+        { emergencyVisible: true },
+        makeActor(patientUserId, "patient"),
+        "127.0.0.1",
+      ),
+    ).rejects.toThrow("Emergency document visibility unavailable.");
+    await expect(
+      service.updatePrescriptionVisibility(
+        readyPrescriptionId,
+        { emergencyVisible: true },
+        makeActor(edStaffUserId, "emergency-department-staff"),
+        "127.0.0.1",
+      ),
+    ).rejects.toThrow("Emergency document visibility unavailable.");
+  });
+
+  it("rechecks provider authorization before writing audit/outbox and returns only after commit", async () => {
+    const sequence: string[] = [];
+    const writeAudit = audit.logInTransaction.bind(audit);
+    const recordNotifications =
+      notificationsService.recordForPatientAndGuardians.bind(
+        notificationsService,
+      );
+    const queueEmails =
+      notificationsService.queueEmergencyEmailOutbox.bind(notificationsService);
+    const auditSpy = vi
+      .spyOn(audit, "logInTransaction")
+      .mockImplementation(async (...args) => {
+        sequence.push("audit");
+        return writeAudit(...args);
+      });
+    const notificationSpy = vi
+      .spyOn(notificationsService, "recordForPatientAndGuardians")
+      .mockImplementation(async (...args) => {
+        const deliveries = await recordNotifications(...args);
+        sequence.push("notification");
+        return deliveries;
+      });
+    const outboxSpy = vi
+      .spyOn(notificationsService, "queueEmergencyEmailOutbox")
+      .mockImplementation(async (...args) => {
+        const recipients = await queueEmails(...args);
+        sequence.push("outbox");
+        return recipients;
+      });
+    const orderedService = new EmergencyAccessService(
+      audit,
+      resolution,
+      notificationsService,
+      crypto,
+    );
+
+    const unauthorizedResolution = await createResolution(patientUserId);
+    sequence.length = 0;
+    auditSpy.mockClear();
+    notificationSpy.mockClear();
+    outboxSpy.mockClear();
+    await expect(
+      orderedService.createRequest(
+        edFacilityId,
+        {
+          resolutionId: unauthorizedResolution,
+          reasonCode: "TIME_CRITICAL_EMERGENCY_CARE",
+        },
+        makeActor(pharmacyStaffUserId, "emergency-department-staff"),
+        "127.0.0.1",
+      ),
+    ).rejects.toThrow("Emergency access unavailable.");
+    expect(sequence).toEqual([]);
+    expect(auditSpy).not.toHaveBeenCalled();
+    expect(notificationSpy).not.toHaveBeenCalled();
+    expect(outboxSpy).not.toHaveBeenCalled();
+
+    const authorizedResolution = await createResolution(patientUserId);
+    sequence.length = 0;
+    auditSpy.mockClear();
+    notificationSpy.mockClear();
+    outboxSpy.mockClear();
+    const result = await orderedService.createRequest(
+      edFacilityId,
+      {
+        resolutionId: authorizedResolution,
+        reasonCode: "TIME_CRITICAL_EMERGENCY_CARE",
+      },
+      makeActor(edStaffUserId, "emergency-department-staff"),
+      "127.0.0.1",
+    );
+    requestIds.push(result.requestId);
+    sequence.push("response");
+    expect(sequence).toEqual(["audit", "notification", "outbox", "response"]);
+    const persistedOutbox = await db
+      .select({ id: notificationEmailOutbox.id })
+      .from(notificationEmailOutbox)
+      .innerJoin(
+        notifications,
+        eq(notificationEmailOutbox.notificationId, notifications.id),
+      )
+      .where(eq(notifications.requestId, result.requestId));
+    expect(persistedOutbox.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ status: "granted" });
+    auditSpy.mockRestore();
+    notificationSpy.mockRestore();
+    outboxSpy.mockRestore();
+  });
+
   it("limits pharmacy summary to allergies and revokes active grants when the profile is disabled", async () => {
     const resolutionId = await createResolution(patientUserId);
     const result = await service.createRequest(
@@ -525,13 +779,11 @@ describe("Emergency access grants and summaries (integration)", () => {
       makeActor(pharmacyStaffUserId, "pharmacy-staff"),
       "127.0.0.1",
     );
-    expect(summary).toMatchObject({
+    expect(summary).toStrictEqual({
       requestId: result.requestId,
+      expiresAt: result.expiresAt,
       allergies: ["FAKE patient-declared allergy"],
     });
-    expect(summary).not.toHaveProperty("bloodGroup");
-    expect(summary).not.toHaveProperty("emergencyContacts");
-    expect(summary).not.toHaveProperty("prescriptions");
 
     await profileService.update(
       patientId,
@@ -574,14 +826,14 @@ describe("Emergency access grants and summaries (integration)", () => {
             "EMERGENCY_PROFILE_ENABLED_TRUE_TO_FALSE",
             "EMERGENCY_ACCESS_REVOKED_PROFILE_DISABLED",
           ]),
-          inArray(auditEvents.resourceId, [...requestIds, patientId]),
+          inArray(auditEvents.resourceId, [result.requestId, patientId]),
         ),
       );
     expect(
       revocationEvents.filter(
         ({ action }) => action === "EMERGENCY_ACCESS_REVOKED_PROFILE_DISABLED",
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(
       revocationEvents.some(
         ({ action, resourceId }) =>
@@ -685,6 +937,109 @@ describe("Emergency access grants and summaries (integration)", () => {
     expect(pendingOutboxAfterFailure).toHaveLength(
       pendingOutboxBeforeFailure.length,
     );
+  });
+
+  it("returns no grant when outbox writing fails and rolls back notification and audit rows", async () => {
+    const recipients = [patientUserId, guardianUserId];
+    const [beforeGrants, beforeNotifications, beforeOutbox, beforeAudits] =
+      await Promise.all([
+        db
+          .select({ id: emergencyAccessRequests.id })
+          .from(emergencyAccessRequests)
+          .where(
+            and(
+              eq(emergencyAccessRequests.patientId, patientId),
+              eq(emergencyAccessRequests.status, "granted"),
+            ),
+          ),
+        db
+          .select({ id: notifications.id })
+          .from(notifications)
+          .where(inArray(notifications.recipientUserId, recipients)),
+        db
+          .select({ id: notificationEmailOutbox.id })
+          .from(notificationEmailOutbox)
+          .innerJoin(
+            notifications,
+            eq(notificationEmailOutbox.notificationId, notifications.id),
+          )
+          .where(inArray(notifications.recipientUserId, recipients)),
+        db
+          .select({ id: auditEvents.id })
+          .from(auditEvents)
+          .where(
+            and(
+              eq(auditEvents.actorId, edStaffUserId),
+              eq(auditEvents.action, "EMERGENCY_ACCESS_REQUEST_GRANTED"),
+            ),
+          ),
+      ]);
+
+    const failingNotifications = {
+      recordForPatientAndGuardians:
+        notificationsService.recordForPatientAndGuardians.bind(
+          notificationsService,
+        ),
+      queueEmergencyEmailOutbox: vi
+        .fn()
+        .mockRejectedValue(new Error("outbox unavailable")),
+    };
+    const serviceWithFailingOutbox = new EmergencyAccessService(
+      audit,
+      resolution,
+      failingNotifications,
+      crypto,
+    );
+    const resolutionId = await createResolution(patientUserId);
+    await expect(
+      serviceWithFailingOutbox.createRequest(
+        edFacilityId,
+        {
+          resolutionId,
+          reasonCode: "OTHER_EMERGENCY_CIRCUMSTANCE",
+        },
+        makeActor(edStaffUserId, "emergency-department-staff"),
+        "127.0.0.1",
+      ),
+    ).rejects.toThrow("outbox unavailable");
+
+    const [afterGrants, afterNotifications, afterOutbox, afterAudits] =
+      await Promise.all([
+        db
+          .select({ id: emergencyAccessRequests.id })
+          .from(emergencyAccessRequests)
+          .where(
+            and(
+              eq(emergencyAccessRequests.patientId, patientId),
+              eq(emergencyAccessRequests.status, "granted"),
+            ),
+          ),
+        db
+          .select({ id: notifications.id })
+          .from(notifications)
+          .where(inArray(notifications.recipientUserId, recipients)),
+        db
+          .select({ id: notificationEmailOutbox.id })
+          .from(notificationEmailOutbox)
+          .innerJoin(
+            notifications,
+            eq(notificationEmailOutbox.notificationId, notifications.id),
+          )
+          .where(inArray(notifications.recipientUserId, recipients)),
+        db
+          .select({ id: auditEvents.id })
+          .from(auditEvents)
+          .where(
+            and(
+              eq(auditEvents.actorId, edStaffUserId),
+              eq(auditEvents.action, "EMERGENCY_ACCESS_REQUEST_GRANTED"),
+            ),
+          ),
+      ]);
+    expect(afterGrants).toHaveLength(beforeGrants.length);
+    expect(afterNotifications).toHaveLength(beforeNotifications.length);
+    expect(afterOutbox).toHaveLength(beforeOutbox.length);
+    expect(afterAudits).toHaveLength(beforeAudits.length);
   });
 
   it("grants access without a deliverable notification channel and flags priority review", async () => {

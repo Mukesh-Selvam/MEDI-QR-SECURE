@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Inject,
+  Patch,
   Param,
   ParseUUIDPipe,
   Post,
@@ -23,6 +24,7 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard.js";
 import { PolicyGuard } from "../auth/guards/policy.guard.js";
 import { createEmergencyAccessRequestSchema } from "./emergency-access.schema.js";
 import { EmergencyAccessService } from "./emergency-access.service.js";
+import { updateEmergencyDocumentVisibilitySchema } from "./emergency-document-visibility.schema.js";
 
 @Controller("emergency-access")
 @UseGuards(JwtAuthGuard, PolicyGuard)
@@ -31,6 +33,35 @@ export class EmergencyAccessController {
     @Inject(EmergencyAccessService)
     private readonly emergencyAccess: EmergencyAccessService,
   ) {}
+
+  @Patch("documents/:documentId/visibility")
+  @RequirePolicy({
+    resource: "emergency-document",
+    action: "update-emergency-visibility",
+  })
+  updatePrescriptionVisibility(
+    @Param("documentId", ParseUUIDPipe) documentId: string,
+    @Body() body: unknown,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: FastifyRequest,
+  ) {
+    const parsed = updateEmergencyDocumentVisibilitySchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException(
+        "Invalid emergency document visibility setting.",
+      );
+    }
+
+    return this.emergencyAccess.updatePrescriptionVisibility(
+      documentId,
+      parsed.data,
+      actor,
+      request.ip ?? "0.0.0.0",
+      typeof request.headers["user-agent"] === "string"
+        ? request.headers["user-agent"]
+        : undefined,
+    );
+  }
 
   @Post("facilities/:facilityId/requests")
   @HttpCode(HttpStatus.CREATED)

@@ -10,17 +10,17 @@ const profileSchema = z.object({
     z.object({
       name: z.string(),
       relationship: z.string(),
-      phone: z.string()
-    })
+      phone: z.string(),
+    }),
   ),
-  enabled: z.boolean()
+  enabled: z.boolean(),
 });
 const userSchema = z.object({
   patientId: z.string().uuid().nullable(),
-  role: z.string()
+  role: z.string(),
 });
 const wardsSchema = z.object({
-  wards: z.array(z.object({ id: z.string().uuid(), label: z.string() }))
+  wards: z.array(z.object({ id: z.string().uuid(), label: z.string() })),
 });
 
 type Profile = z.infer<typeof profileSchema>;
@@ -29,7 +29,7 @@ const emptyProfile: Profile = {
   bloodGroup: "",
   allergies: [],
   emergencyContacts: [],
-  enabled: false
+  enabled: false,
 };
 
 function readCsrfCookie(): string {
@@ -59,7 +59,7 @@ export default function PatientEmergencyProfilePage() {
     try {
       const [userResponse, inboxResponse] = await Promise.all([
         fetch("/api/v1/auth/me", { cache: "no-store" }),
-        fetch("/api/v1/access/requests/inbox", { cache: "no-store" })
+        fetch("/api/v1/access/requests/inbox", { cache: "no-store" }),
       ]);
       if (!userResponse.ok)
         throw new Error("Sign in to manage emergency details.");
@@ -71,7 +71,7 @@ export default function PatientEmergencyProfilePage() {
         ...(user.patientId
           ? [{ id: user.patientId, label: "My profile" }]
           : []),
-        ...inbox.wards
+        ...inbox.wards,
       ];
       const target =
         requestedPatientId &&
@@ -82,12 +82,12 @@ export default function PatientEmergencyProfilePage() {
       if (!target) {
         setPatientId("");
         throw new Error(
-          "No patient profile is available for this account. Contact support if you think this is a mistake."
+          "No patient profile is available for this account. Contact support if you think this is a mistake.",
         );
       }
       setPatientId(target);
       const response = await fetch(`/api/v1/emergency/profiles/${target}`, {
-        cache: "no-store"
+        cache: "no-store",
       });
       if (!response.ok)
         throw new Error("Emergency details could not be loaded.");
@@ -99,7 +99,7 @@ export default function PatientEmergencyProfilePage() {
       setError(
         loadError instanceof Error
           ? loadError.message
-          : "Emergency details could not be loaded."
+          : "Emergency details could not be loaded.",
       );
     } finally {
       setLoading(false);
@@ -124,16 +124,16 @@ export default function PatientEmergencyProfilePage() {
         method: "PUT",
         headers: {
           "content-type": "application/json",
-          "x-csrf-token": csrfToken
+          "x-csrf-token": csrfToken,
         },
         body: JSON.stringify({
           ...profile,
           allergies: allergyText
             .split("\n")
             .map((value) => value.trim())
-            .filter(Boolean)
+            .filter(Boolean),
         }),
-        cache: "no-store"
+        cache: "no-store",
       });
       if (!response.ok)
         throw new Error("Emergency details could not be saved.");
@@ -143,7 +143,7 @@ export default function PatientEmergencyProfilePage() {
       setError(
         saveError instanceof Error
           ? saveError.message
-          : "Emergency details could not be saved."
+          : "Emergency details could not be saved.",
       );
     } finally {
       setSaving(false);
@@ -153,14 +153,14 @@ export default function PatientEmergencyProfilePage() {
   function updateContact(
     index: number,
     field: "name" | "relationship" | "phone",
-    value: string
+    value: string,
   ) {
     setProfile((current) => {
       const contacts = [...current.emergencyContacts];
       const existing = contacts[index] ?? {
         name: "",
         relationship: "",
-        phone: ""
+        phone: "",
       };
       contacts[index] = { ...existing, [field]: value };
       return { ...current, emergencyContacts: contacts };
@@ -180,8 +180,10 @@ export default function PatientEmergencyProfilePage() {
     <main className="mx-auto w-full max-w-3xl px-4 py-10 text-[#2B2230]">
       <h1 className="font-serif text-3xl font-semibold">Emergency details</h1>
       <p className="mt-3 max-w-[65ch] leading-7">
-        These details are entered by you and saved securely. Emergency access is
-        not available yet, so this setting does not share them with anyone.
+        If enabled, verified hospital emergency department staff may request
+        30-minute access to these details and prescriptions you mark visible in
+        emergencies. Verified pharmacies may see allergies only. Turning access
+        off revokes active emergency grants immediately.
       </p>
 
       {!hasPatientProfile && error && (
@@ -218,7 +220,7 @@ export default function PatientEmergencyProfilePage() {
               onChange={(event) =>
                 setProfile((current) => ({
                   ...current,
-                  bloodGroup: event.target.value
+                  bloodGroup: event.target.value,
                 }))
               }
               className="min-h-11 w-full rounded-lg border border-[#8B7D88] bg-white px-3"
@@ -233,7 +235,7 @@ export default function PatientEmergencyProfilePage() {
                 "AB-",
                 "O+",
                 "O-",
-                "unknown"
+                "unknown",
               ].map((group) => (
                 <option key={group} value={group}>
                   {group}
@@ -302,8 +304,8 @@ export default function PatientEmergencyProfilePage() {
                     setProfile((current) => ({
                       ...current,
                       emergencyContacts: current.emergencyContacts.filter(
-                        (_contact, contactIndex) => contactIndex !== index
-                      )
+                        (_contact, contactIndex) => contactIndex !== index,
+                      ),
                     }))
                   }
                   className="min-h-11 px-3 font-semibold text-[#7B2930] underline underline-offset-4 dark:text-[#F2B9AC]"
@@ -320,8 +322,8 @@ export default function PatientEmergencyProfilePage() {
                     ...current,
                     emergencyContacts: [
                       ...current.emergencyContacts,
-                      { name: "", relationship: "", phone: "" }
-                    ]
+                      { name: "", relationship: "", phone: "" },
+                    ],
                   }))
                 }
                 className="min-h-11 rounded-lg border border-[#8B7D88] px-4 font-semibold"
@@ -338,15 +340,14 @@ export default function PatientEmergencyProfilePage() {
               onChange={(event) =>
                 setProfile((current) => ({
                   ...current,
-                  enabled: event.target.checked
+                  enabled: event.target.checked,
                 }))
               }
               className="mt-1 size-5 accent-[#4A1D3F]"
             />
             <span>
-              Allow emergency access to these details. Off by default. Emergency
-              access is not available yet; this records your preference and does
-              not grant access.
+              Allow emergency access to these details. Off by default. You or a
+              verified guardian can turn access off at any time.
             </span>
           </label>
 
