@@ -22,6 +22,12 @@ export const affiliationUserSchema = z
   })
   .strict();
 
+export const acceptStaffInvitationSchema = z
+  .object({
+    invitationToken: z.string().min(32).max(128).regex(/^[A-Za-z0-9_-]+$/),
+  })
+  .strict();
+
 export const resourceIdSchema = z.string().uuid();
 export type CreateFacilityInput = z.infer<typeof createFacilitySchema>;
 export type FacilityVerificationInput = z.infer<

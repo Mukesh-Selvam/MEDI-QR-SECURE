@@ -6,6 +6,7 @@ import {
   auditEvents,
   facilities,
   facilityStaffAffiliations,
+  facilityStaffInvitations,
   users,
 } from "../../database/schema.js";
 import { AuditService } from "../audit/audit.service.js";
@@ -184,24 +185,84 @@ describe("Facility verification and affiliations (integration)", () => {
     expect(staffAffiliation.status).toBe("pending");
     expect(staffAffiliation.role).toBe("emergency-department-staff");
 
+    const invitedStaff: AuthenticatedUser = {
+      id: edStaffId,
+      sub: edStaffId,
+      role: "emergency-department-staff",
+      isMfaVerified: true,
+    };
     await expect(
-      service.updateStaffAffiliation(
+      service.acceptStaffInvitation(
         facility.id,
         staffAffiliation.id,
-        "activate",
-        platformAdmin,
+        { invitationToken: staffAffiliation.invitationToken },
+        facilityAdmin,
         "127.0.0.1",
       ),
-    ).rejects.toThrow("cannot activate staff affiliations");
+    ).rejects.toThrow("Staff invitation is unavailable.");
+    await expect(
+      service.acceptStaffInvitation(
+        facility.id,
+        staffAffiliation.id,
+        { invitationToken: staffAffiliation.invitationToken },
+        {
+          id: pharmacyStaffId,
+          sub: pharmacyStaffId,
+          role: "pharmacy-staff",
+          isMfaVerified: true,
+        },
+        "127.0.0.1",
+      ),
+    ).rejects.toThrow("Staff invitation is unavailable.");
+    await expect(
+      service.acceptStaffInvitation(
+        facility.id,
+        staffAffiliation.id,
+        { invitationToken: staffAffiliation.invitationToken },
+        { ...invitedStaff, isMfaVerified: false },
+        "127.0.0.1",
+      ),
+    ).rejects.toThrow("Staff invitation is unavailable.");
 
-    const activeAffiliation = await service.updateStaffAffiliation(
+    await db
+      .update(facilityStaffInvitations)
+      .set({ expiresAt: new Date(Date.now() - 1_000) })
+      .where(
+        eq(facilityStaffInvitations.affiliationId, staffAffiliation.id),
+      );
+    await expect(
+      service.acceptStaffInvitation(
+        facility.id,
+        staffAffiliation.id,
+        { invitationToken: staffAffiliation.invitationToken },
+        invitedStaff,
+        "127.0.0.1",
+      ),
+    ).rejects.toThrow("Staff invitation is unavailable.");
+    await db
+      .update(facilityStaffInvitations)
+      .set({ expiresAt: new Date(Date.now() + 60_000) })
+      .where(
+        eq(facilityStaffInvitations.affiliationId, staffAffiliation.id),
+      );
+
+    const activeAffiliation = await service.acceptStaffInvitation(
       facility.id,
       staffAffiliation.id,
-      "activate",
-      facilityAdmin,
+      { invitationToken: staffAffiliation.invitationToken },
+      invitedStaff,
       "127.0.0.1",
     );
     expect(activeAffiliation.status).toBe("active");
+    await expect(
+      service.acceptStaffInvitation(
+        facility.id,
+        staffAffiliation.id,
+        { invitationToken: staffAffiliation.invitationToken },
+        invitedStaff,
+        "127.0.0.1",
+      ),
+    ).rejects.toThrow("Staff invitation is unavailable.");
 
     const secondFacilityAdmin: AuthenticatedUser = {
       id: secondFacilityAdminId,
@@ -241,15 +302,6 @@ describe("Facility verification and affiliations (integration)", () => {
       "127.0.0.1",
     );
     expect(platformSuspended.platformSuspended).toBe(true);
-    await expect(
-      service.updateStaffAffiliation(
-        facility.id,
-        staffAffiliation.id,
-        "activate",
-        facilityAdmin,
-        "127.0.0.1",
-      ),
-    ).rejects.toThrow("platform administrator suspended");
 
     const revoked = await service.updateStaffAffiliation(
       facility.id,

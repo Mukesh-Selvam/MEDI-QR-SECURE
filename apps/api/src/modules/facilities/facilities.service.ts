@@ -6,11 +6,13 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { createHash, randomBytes } from "node:crypto";
 import { and, count, eq } from "drizzle-orm";
 import { db } from "../../database/index.js";
 import {
   facilities,
   facilityStaffAffiliations,
+  facilityStaffInvitations,
   users,
 } from "../../database/schema.js";
 import type { AuditAction, AuditEventInput } from "../audit/audit.types.js";
@@ -18,6 +20,7 @@ import { AuditService } from "../audit/audit.service.js";
 import type { AuthenticatedUser } from "../auth/decorators/current-user.decorator.js";
 import {
   affiliationUserSchema,
+  acceptStaffInvitationSchema,
   createFacilitySchema,
   facilityVerificationSchema,
   resourceIdSchema,
@@ -28,7 +31,8 @@ type AffiliationStatus =
   (typeof facilityStaffAffiliations.$inferSelect)["status"];
 type AffiliationRole = (typeof facilityStaffAffiliations.$inferSelect)["role"];
 type FacilityType = (typeof facilities.$inferSelect)["facilityType"];
-type AffiliationMutation = "activate" | "suspend" | "revoke";
+type AffiliationMutation = "suspend" | "revoke";
+const STAFF_INVITATION_LIFETIME_MS = 24 * 60 * 60 * 1000;
 
 const facilityVerificationActions: Partial<Record<string, AuditAction>> = {
   "pending:verified": "FACILITY_VERIFICATION_PENDING_TO_VERIFIED",
@@ -350,7 +354,130 @@ export class FacilitiesService {
         },
         transaction,
       );
-      return affiliation;
+      const invitationToken = randomBytes(32).toString("base64url");
+      await transaction.insert(facilityStaffInvitations).values({
+        facilityId,
+        affiliationId: affiliation.id,
+        invitedUserId: target.id,
+        tokenHash: createHash("sha256")
+          .update(invitationToken)
+          .digest("hex"),
+        expiresAt: new Date(Date.now() + STAFF_INVITATION_LIFETIME_MS),
+        createdByUserId: actor.id,
+      });
+      return { ...affiliation, invitationToken };
+    });
+  }
+
+  async acceptStaffInvitation(
+    facilityId: string,
+    affiliationId: string,
+    input: unknown,
+    actor: AuthenticatedUser,
+    ip: string,
+    userAgent?: string,
+  ) {
+    facilityId = this.requireResourceId(facilityId);
+    affiliationId = this.requireResourceId(affiliationId);
+    const parsed = acceptStaffInvitationSchema.safeParse(input);
+    if (!parsed.success) {
+      throw new BadRequestException("Invalid staff invitation.");
+    }
+    if (
+      actor.isMfaVerified !== true ||
+      (actor.role !== "emergency-department-staff" &&
+        actor.role !== "pharmacy-staff")
+    ) {
+      throw new ForbiddenException("Staff invitation is unavailable.");
+    }
+
+    const tokenHash = createHash("sha256")
+      .update(parsed.data.invitationToken)
+      .digest("hex");
+    return db.transaction(async (transaction) => {
+      const facility = await this.requireFacility(transaction, facilityId);
+      const [invitation] = await transaction
+        .select()
+        .from(facilityStaffInvitations)
+        .where(
+          and(
+            eq(facilityStaffInvitations.facilityId, facilityId),
+            eq(facilityStaffInvitations.affiliationId, affiliationId),
+            eq(facilityStaffInvitations.tokenHash, tokenHash),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (
+        !invitation ||
+        invitation.acceptedAt ||
+        invitation.expiresAt <= new Date() ||
+        invitation.invitedUserId !== actor.id
+      ) {
+        throw new ForbiddenException("Staff invitation is unavailable.");
+      }
+
+      if (
+        facility.verificationStatus !== "pending" &&
+        facility.verificationStatus !== "verified"
+      ) {
+        throw new ForbiddenException("Staff invitation is unavailable.");
+      }
+      const target = await this.requireActiveUser(transaction, actor.id);
+      if (
+        target.role !== actor.role ||
+        !this.isStaffRoleForFacility(target.role, facility.facilityType)
+      ) {
+        throw new ForbiddenException("Staff invitation is unavailable.");
+      }
+
+      const [affiliation] = await transaction
+        .select()
+        .from(facilityStaffAffiliations)
+        .where(
+          and(
+            eq(facilityStaffAffiliations.id, affiliationId),
+            eq(facilityStaffAffiliations.facilityId, facilityId),
+            eq(facilityStaffAffiliations.userId, actor.id),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (
+        !affiliation ||
+        affiliation.status !== "pending" ||
+        affiliation.platformSuspended
+      ) {
+        throw new ForbiddenException("Staff invitation is unavailable.");
+      }
+
+      const now = new Date();
+      const [updated] = await transaction
+        .update(facilityStaffAffiliations)
+        .set({ status: "active", updatedAt: now })
+        .where(eq(facilityStaffAffiliations.id, affiliationId))
+        .returning();
+      if (!updated) throw new Error("Affiliation acceptance returned no row.");
+
+      const [accepted] = await transaction
+        .update(facilityStaffInvitations)
+        .set({ acceptedAt: now })
+        .where(eq(facilityStaffInvitations.id, invitation.id))
+        .returning({ id: facilityStaffInvitations.id });
+      if (!accepted) throw new Error("Invitation acceptance returned no row.");
+
+      await this.writeAudit(
+        {
+          actor,
+          action: "FACILITY_STAFF_AFFILIATION_PENDING_TO_ACTIVE",
+          resourceType: "facility_staff_affiliation",
+          resourceId: affiliationId,
+          ip,
+          userAgent,
+        },
+        transaction,
+      );
+      return updated;
     });
   }
 
@@ -431,15 +558,6 @@ export class FacilitiesService {
             "Facility administrators can manage only matching ED or pharmacy staff.",
           );
         }
-        if (mutation === "activate" && affiliation.platformSuspended) {
-          throw new ForbiddenException(
-            "A platform administrator suspended this affiliation.",
-          );
-        }
-      } else if (mutation === "activate") {
-        throw new ForbiddenException(
-          "Platform administrators cannot activate staff affiliations.",
-        );
       }
 
       const nextStatus = this.getNextAffiliationStatus(
@@ -575,17 +693,6 @@ export class FacilitiesService {
     platformSuspended: boolean,
     actorRole: string,
   ): AffiliationStatus {
-    if (mutation === "activate") {
-      if (
-        actorRole !== "facility-admin" ||
-        platformSuspended ||
-        (current !== "pending" && current !== "suspended")
-      ) {
-        throw new ConflictException("This affiliation cannot be activated.");
-      }
-      return "active";
-    }
-
     if (current === "revoked") {
       throw new ConflictException("A revoked affiliation cannot be changed.");
     }

@@ -32,19 +32,18 @@ resourcePolicy:
                   (request.resource.attr.facility_type == "hospital-emergency-department" && request.resource.attr.requested_role == "emergency-department-staff") ||
                   (request.resource.attr.facility_type == "pharmacy" && request.resource.attr.requested_role == "pharmacy-staff")
 
-    - actions: ["activate-staff"]
-      roles: ["facility-admin"]
+    - actions: ["accept-invitation"]
+      roles: ["emergency-department-staff", "pharmacy-staff"]
       effect: EFFECT_ALLOW
       condition:
         match:
           all:
             of:
               - expr: request.principal.attr.is_mfa_verified == true
-              - expr: request.principal.attr.facility_ids.exists(facilityId, facilityId == request.resource.attr.facility_id)
-              - expr: request.resource.attr.affiliation_user_id != request.principal.id
+              - expr: request.resource.attr.affiliation_user_id == request.principal.id
               - expr: request.resource.attr.facility_status == "pending" || request.resource.attr.facility_status == "verified"
               - expr: request.resource.attr.platform_suspended == false
-              - expr: request.resource.attr.affiliation_status == "pending" || request.resource.attr.affiliation_status == "suspended"
+              - expr: request.resource.attr.affiliation_status == "pending"
               - expr: >
                   (request.resource.attr.facility_type == "hospital-emergency-department" && request.resource.attr.affiliation_role == "emergency-department-staff") ||
                   (request.resource.attr.facility_type == "pharmacy" && request.resource.attr.affiliation_role == "pharmacy-staff")

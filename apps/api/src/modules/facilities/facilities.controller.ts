@@ -92,18 +92,22 @@ export class FacilitiesController {
     );
   }
 
-  @RequirePolicy({ resource: "facility-affiliation", action: "activate-staff" })
-  @Patch(":facilityId/affiliations/:affiliationId/activate")
-  activateStaffAffiliation(
+  @RequirePolicy({
+    resource: "facility-affiliation",
+    action: "accept-invitation",
+  })
+  @Post(":facilityId/affiliations/:affiliationId/accept")
+  acceptStaffInvitation(
     @Param("facilityId") facilityId: string,
     @Param("affiliationId") affiliationId: string,
+    @Body() body: unknown,
     @CurrentUser() actor: AuthenticatedUser,
     @Req() request: FastifyRequest,
   ) {
-    return this.facilities.updateStaffAffiliation(
+    return this.facilities.acceptStaffInvitation(
       facilityId,
       affiliationId,
-      "activate",
+      body,
       actor,
       request.ip ?? "unknown",
       this.userAgent(request),

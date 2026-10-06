@@ -260,6 +260,39 @@ export const facilityStaffAffiliations = pgTable(
   ],
 );
 
+export const facilityStaffInvitations = pgTable(
+  "facility_staff_invitations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    facilityId: uuid("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "cascade" }),
+    affiliationId: uuid("affiliation_id")
+      .notNull()
+      .references(() => facilityStaffAffiliations.id, { onDelete: "cascade" }),
+    invitedUserId: uuid("invited_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: varchar("token_hash", { length: 64 }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    createdByUserId: uuid("created_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("facility_staff_invitations_token_hash_idx").on(
+      table.tokenHash,
+    ),
+    index("facility_staff_invitations_affiliation_idx").on(
+      table.affiliationId,
+    ),
+  ],
+);
+
 export const emergencyAccessRequests = pgTable(
   "emergency_access_requests",
   {

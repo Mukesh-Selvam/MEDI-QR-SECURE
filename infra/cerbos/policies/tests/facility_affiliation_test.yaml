@@ -26,6 +26,24 @@ principals:
     attr:
       is_mfa_verified: false
       facility_ids: ["00000000-0000-4000-8000-000000000051"]
+  ed_staff:
+    id: 00000000-0000-4000-8000-000000000062
+    roles: ["emergency-department-staff"]
+    attr:
+      is_mfa_verified: true
+      facility_ids: []
+  ed_staff_without_mfa:
+    id: 00000000-0000-4000-8000-000000000062
+    roles: ["emergency-department-staff"]
+    attr:
+      is_mfa_verified: false
+      facility_ids: []
+  pharmacy_staff:
+    id: 00000000-0000-4000-8000-000000000063
+    roles: ["pharmacy-staff"]
+    attr:
+      is_mfa_verified: true
+      facility_ids: []
   platform_admin_without_mfa:
     id: 00000000-0000-4000-8000-000000000045
     roles: ["platform-admin"]
@@ -89,6 +107,17 @@ resources:
       facility_status: verified
       affiliation_user_id: 00000000-0000-4000-8000-000000000062
       affiliation_role: emergency-department-staff
+      affiliation_status: pending
+      platform_suspended: false
+  pending_pharmacy_staff:
+    kind: facility-affiliation
+    id: pending-pharmacy-staff
+    attr:
+      facility_id: 00000000-0000-4000-8000-000000000052
+      facility_type: pharmacy
+      facility_status: verified
+      affiliation_user_id: 00000000-0000-4000-8000-000000000063
+      affiliation_role: pharmacy-staff
       affiliation_status: pending
       platform_suspended: false
   suspended_by_facility:
@@ -192,7 +221,6 @@ tests:
       actions:
         - create-facility-admin
         - create-staff
-        - activate-staff
         - suspend
         - revoke
     expected:
@@ -207,13 +235,11 @@ tests:
       - principal: facility_admin_without_mfa
         resource: pending_staff
         actions:
-          activate-staff: EFFECT_DENY
           suspend: EFFECT_DENY
           revoke: EFFECT_DENY
       - principal: platform_admin_without_mfa
         resource: pending_staff
         actions:
-          activate-staff: EFFECT_DENY
           suspend: EFFECT_DENY
           revoke: EFFECT_DENY
 
@@ -250,31 +276,39 @@ tests:
         actions:
           create-staff: EFFECT_DENY
 
-  - name: Facility administrator can activate pending or locally suspended staff
+  - name: Invited staff can accept their own MFA-protected affiliation
     input:
-      principals: [facility_admin_ed]
-      resources: [pending_staff, suspended_by_facility]
-      actions: [activate-staff]
+      principals: [ed_staff, pharmacy_staff]
+      resources: [pending_staff, pending_pharmacy_staff]
+      actions: [accept-invitation]
     expected:
-      - principal: facility_admin_ed
+      - principal: ed_staff
         resource: pending_staff
         actions:
-          activate-staff: EFFECT_ALLOW
-      - principal: facility_admin_ed
-        resource: suspended_by_facility
+          accept-invitation: EFFECT_ALLOW
+      - principal: pharmacy_staff
+        resource: pending_pharmacy_staff
         actions:
-          activate-staff: EFFECT_ALLOW
+          accept-invitation: EFFECT_ALLOW
 
-  - name: Facility administrator cannot reactivate platform-suspended staff
+  - name: Only the invited staff member can accept and MFA is required
     input:
-      principals: [facility_admin_ed]
-      resources: [suspended_by_platform]
-      actions: [activate-staff]
+      principals: [facility_admin_ed, ed_staff_without_mfa, pharmacy_staff]
+      resources: [pending_staff, suspended_by_platform]
+      actions: [accept-invitation]
     expected:
       - principal: facility_admin_ed
         resource: suspended_by_platform
         actions:
-          activate-staff: EFFECT_DENY
+          accept-invitation: EFFECT_DENY
+      - principal: ed_staff_without_mfa
+        resource: pending_staff
+        actions:
+          accept-invitation: EFFECT_DENY
+      - principal: pharmacy_staff
+        resource: pending_staff
+        actions:
+          accept-invitation: EFFECT_DENY
 
   - name: Facility administrator cannot manage own or another administrator affiliation
     input:
@@ -322,16 +356,15 @@ tests:
           suspend: EFFECT_DENY
           revoke: EFFECT_DENY
 
-  - name: Platform administrator can suspend or revoke any affiliation but cannot activate
+  - name: Platform administrator can suspend or revoke any affiliation
     input:
       principals: [platform_admin]
       resources: [facility_admin_target]
-      actions: [activate-staff, suspend, revoke]
+      actions: [suspend, revoke]
     expected:
       - principal: platform_admin
         resource: facility_admin_target
         actions:
-          activate-staff: EFFECT_DENY
           suspend: EFFECT_ALLOW
           revoke: EFFECT_ALLOW
 
@@ -340,13 +373,13 @@ tests:
       principals: [unauthenticated]
       resources: [staff_creation_ed]
       actions:
-        [create-staff, create-facility-admin, activate-staff, suspend, revoke]
+        [create-staff, create-facility-admin, accept-invitation, suspend, revoke]
     expected:
       - principal: unauthenticated
         resource: staff_creation_ed
         actions:
           create-staff: EFFECT_DENY
           create-facility-admin: EFFECT_DENY
-          activate-staff: EFFECT_DENY
+          accept-invitation: EFFECT_DENY
           suspend: EFFECT_DENY
           revoke: EFFECT_DENY

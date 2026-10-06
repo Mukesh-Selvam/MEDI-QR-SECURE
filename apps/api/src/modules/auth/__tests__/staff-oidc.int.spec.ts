@@ -206,9 +206,10 @@ describe("Staff Keycloak token validation (integration)", () => {
         payload: { userId: randomUUID() },
       }),
       fastify.inject({
-        method: "PATCH",
-        url: `/api/v1/facilities/${facilityId}/affiliations/${affiliationId}/activate`,
+        method: "POST",
+        url: `/api/v1/facilities/${facilityId}/affiliations/${affiliationId}/accept`,
         headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
+        payload: { invitationToken: "not-a-real-invitation-token" },
       }),
       fastify.inject({
         method: "PATCH",
