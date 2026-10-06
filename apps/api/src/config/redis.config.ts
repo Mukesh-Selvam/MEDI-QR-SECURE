@@ -7,6 +7,20 @@ type RedisEnvironment = Pick<Env, "REDIS_HOST" | "REDIS_PORT" | "REDIS_PASSWORD"
 
 const logger = new Logger("Redis");
 
+export function createRedisOutageWarningHandlers(warn: () => void) {
+  let outageWarningLogged = false;
+  return {
+    onError() {
+      if (outageWarningLogged) return;
+      outageWarningLogged = true;
+      warn();
+    },
+    onReady() {
+      outageWarningLogged = false;
+    },
+  };
+}
+
 export function getRedisConnectionOptions(
   config: RedisEnvironment = env
 ): BullMqRedisOptions {
@@ -19,8 +33,10 @@ export function getRedisConnectionOptions(
 
 export function createRedisClient(options: RedisOptions = {}): Redis {
   const client = new Redis({ ...getRedisConnectionOptions(), ...options });
-  client.on("error", () => {
+  const outageHandlers = createRedisOutageWarningHandlers(() => {
     logger.warn("Redis client reported a connection error.");
   });
+  client.on("error", outageHandlers.onError);
+  client.on("ready", outageHandlers.onReady);
   return client;
 }

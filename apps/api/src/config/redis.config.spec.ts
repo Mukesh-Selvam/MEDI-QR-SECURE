@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { getRedisConnectionOptions } from "./redis.config.js";
+import { describe, expect, it, vi } from "vitest";
+import {
+  createRedisOutageWarningHandlers,
+  getRedisConnectionOptions,
+} from "./redis.config.js";
 
 describe("Redis connection configuration", () => {
   it("passes passwords directly as client options, never through a URL", () => {
@@ -15,5 +18,19 @@ describe("Redis connection configuration", () => {
       password: "reserved:@/?#[]%characters",
     });
     expect(options).not.toHaveProperty("url");
+  });
+
+  it("logs once during a Redis outage and resets after recovery", () => {
+    const warn = vi.fn();
+    const handlers = createRedisOutageWarningHandlers(warn);
+
+    handlers.onError();
+    handlers.onError();
+    handlers.onError();
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    handlers.onReady();
+    handlers.onError();
+    expect(warn).toHaveBeenCalledTimes(2);
   });
 });
