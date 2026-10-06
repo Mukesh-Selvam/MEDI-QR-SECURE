@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Logger } from "@nestjs/common";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, count, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createRedisClient } from "../../config/redis.config.js";
 import { db } from "../../database/index.js";
@@ -54,6 +54,7 @@ describe("Emergency access grants and summaries (integration)", () => {
   let guardianUserId: string;
   let edStaffUserId: string;
   let pharmacyStaffUserId: string;
+  let facilityAdminUserIds: string[] = [];
   let patientId: string;
   let guardianPatientId: string;
   let edFacilityId: string;
@@ -116,6 +117,8 @@ describe("Emergency access grants and summaries (integration)", () => {
         },
         { role: "emergency-department-staff", status: "active" },
         { role: "pharmacy-staff", status: "active" },
+        { role: "facility-admin", status: "active" },
+        { role: "facility-admin", status: "active" },
       ])
       .returning({ id: users.id, role: users.role });
     const byRole = new Map(fakeUsers.map((user) => [user.role, user.id]));
@@ -123,6 +126,9 @@ describe("Emergency access grants and summaries (integration)", () => {
     guardianUserId = byRole.get("guardian")!;
     edStaffUserId = byRole.get("emergency-department-staff")!;
     pharmacyStaffUserId = byRole.get("pharmacy-staff")!;
+    facilityAdminUserIds = fakeUsers
+      .filter((user) => user.role === "facility-admin")
+      .map((user) => user.id);
 
     const [patient] = await db
       .insert(patients)
@@ -191,6 +197,14 @@ describe("Emergency access grants and summaries (integration)", () => {
         role: "pharmacy-staff",
         status: "active",
       },
+      ...[edFacilityId, pharmacyFacilityId].flatMap((facilityId) =>
+        facilityAdminUserIds.map((userId) => ({
+          facilityId,
+          userId,
+          role: "facility-admin" as const,
+          status: "active" as const,
+        })),
+      ),
     ]);
 
     const profilePayload = Buffer.from(
@@ -333,6 +347,7 @@ describe("Emergency access grants and summaries (integration)", () => {
       guardianUserId,
       edStaffUserId,
       pharmacyStaffUserId,
+      ...facilityAdminUserIds,
       ...additionalUserIds,
     ].filter(Boolean);
     if (userIds.length > 0) {
@@ -759,6 +774,187 @@ describe("Emergency access grants and summaries (integration)", () => {
     auditSpy.mockRestore();
     notificationSpy.mockRestore();
     outboxSpy.mockRestore();
+  });
+
+  it("requires two active facility administrators and removes eligibility below that count", async () => {
+    for (const provider of [
+      {
+        facilityId: edFacilityId,
+        staffUserId: edStaffUserId,
+        role: "emergency-department-staff",
+      },
+      {
+        facilityId: pharmacyFacilityId,
+        staffUserId: pharmacyStaffUserId,
+        role: "pharmacy-staff",
+      },
+    ] as const) {
+      const initialAdminCount = await db
+        .select({ count: count() })
+        .from(facilityStaffAffiliations)
+        .innerJoin(users, eq(facilityStaffAffiliations.userId, users.id))
+        .where(
+          and(
+            eq(facilityStaffAffiliations.facilityId, provider.facilityId),
+            eq(facilityStaffAffiliations.role, "facility-admin"),
+            eq(facilityStaffAffiliations.status, "active"),
+            eq(users.status, "active"),
+          ),
+        );
+      expect(initialAdminCount[0]?.count).toBe(2);
+
+      const eligibleRequest = await service.createRequest(
+        provider.facilityId,
+        {
+          resolutionId: await createResolution(patientUserId),
+          reasonCode: "TIME_CRITICAL_EMERGENCY_CARE",
+        },
+        makeActor(provider.staffUserId, provider.role),
+        "127.0.0.1",
+      );
+      requestIds.push(eligibleRequest.requestId);
+      expect(eligibleRequest.status).toBe("granted");
+
+      const [secondAdminAffiliation] = await db
+        .select({ id: facilityStaffAffiliations.id })
+        .from(facilityStaffAffiliations)
+        .where(
+          and(
+            eq(facilityStaffAffiliations.facilityId, provider.facilityId),
+            eq(facilityStaffAffiliations.userId, facilityAdminUserIds[1]!),
+            eq(facilityStaffAffiliations.role, "facility-admin"),
+            eq(facilityStaffAffiliations.status, "active"),
+          ),
+        );
+      await db
+        .update(facilityStaffAffiliations)
+        .set({ status: "suspended" })
+        .where(eq(facilityStaffAffiliations.id, secondAdminAffiliation.id));
+
+      const reducedAdminCount = await db
+        .select({ count: count() })
+        .from(facilityStaffAffiliations)
+        .innerJoin(users, eq(facilityStaffAffiliations.userId, users.id))
+        .where(
+          and(
+            eq(facilityStaffAffiliations.facilityId, provider.facilityId),
+            eq(facilityStaffAffiliations.role, "facility-admin"),
+            eq(facilityStaffAffiliations.status, "active"),
+            eq(users.status, "active"),
+          ),
+        );
+      expect(reducedAdminCount[0]?.count).toBe(1);
+
+      try {
+        const requestsBeforeDenial = await db
+          .select({ count: count() })
+          .from(emergencyAccessRequests)
+          .where(
+            and(
+              eq(emergencyAccessRequests.facilityId, provider.facilityId),
+              eq(emergencyAccessRequests.patientId, patientId),
+            ),
+          );
+        await expect(
+          service.createRequest(
+            provider.facilityId,
+            {
+              resolutionId: await createResolution(patientUserId),
+              reasonCode: "TIME_CRITICAL_EMERGENCY_CARE",
+            },
+            makeActor(provider.staffUserId, provider.role),
+            "127.0.0.1",
+          ),
+        ).rejects.toThrow("Emergency access unavailable.");
+        const requestsAfterDenial = await db
+          .select({ count: count() })
+          .from(emergencyAccessRequests)
+          .where(
+            and(
+              eq(emergencyAccessRequests.facilityId, provider.facilityId),
+              eq(emergencyAccessRequests.patientId, patientId),
+            ),
+          );
+        expect(requestsAfterDenial[0]?.count).toBe(
+          requestsBeforeDenial[0]?.count,
+        );
+      } finally {
+        await db
+          .update(facilityStaffAffiliations)
+          .set({ status: "active" })
+          .where(eq(facilityStaffAffiliations.id, secondAdminAffiliation.id));
+      }
+
+      const secondAdminUserId = facilityAdminUserIds[1]!;
+      try {
+        await db
+          .update(users)
+          .set({ status: "suspended" })
+          .where(eq(users.id, secondAdminUserId));
+        await expect(
+          service.createRequest(
+            provider.facilityId,
+            {
+              resolutionId: await createResolution(patientUserId),
+              reasonCode: "TIME_CRITICAL_EMERGENCY_CARE",
+            },
+            makeActor(provider.staffUserId, provider.role),
+            "127.0.0.1",
+          ),
+        ).rejects.toThrow("Emergency access unavailable.");
+      } finally {
+        await db
+          .update(users)
+          .set({ status: "active" })
+          .where(eq(users.id, secondAdminUserId));
+      }
+
+      try {
+        await db
+          .update(facilityStaffAffiliations)
+          .set({ status: "revoked" })
+          .where(eq(facilityStaffAffiliations.id, secondAdminAffiliation.id));
+        await expect(
+          service.createRequest(
+            provider.facilityId,
+            {
+              resolutionId: await createResolution(patientUserId),
+              reasonCode: "TIME_CRITICAL_EMERGENCY_CARE",
+            },
+            makeActor(provider.staffUserId, provider.role),
+            "127.0.0.1",
+          ),
+        ).rejects.toThrow("Emergency access unavailable.");
+      } finally {
+        await db
+          .update(facilityStaffAffiliations)
+          .set({ status: "active" })
+          .where(eq(facilityStaffAffiliations.id, secondAdminAffiliation.id));
+      }
+
+      try {
+        await db
+          .update(facilities)
+          .set({ verificationStatus: "pending" })
+          .where(eq(facilities.id, provider.facilityId));
+        await expect(
+          service.createRequest(
+            provider.facilityId,
+            {
+              resolutionId: await createResolution(patientUserId),
+              reasonCode: "TIME_CRITICAL_EMERGENCY_CARE",
+            },
+            makeActor(provider.staffUserId, provider.role),
+            "127.0.0.1",
+          ),
+        ).rejects.toThrow("Emergency access unavailable.");
+      } finally {
+        await db
+          .update(facilities)
+          .set({ verificationStatus: "verified" })
+          .where(eq(facilities.id, provider.facilityId));
+      }
+    }
   });
 
   it("limits pharmacy summary to allergies and revokes active grants when the profile is disabled", async () => {

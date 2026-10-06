@@ -4,7 +4,7 @@ import {
   Inject,
   Injectable,
 } from "@nestjs/common";
-import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "../../database/index.js";
 import {
@@ -17,6 +17,7 @@ import {
   guardianships,
   patients,
   qrCredentials,
+  users,
 } from "../../database/schema.js";
 import type { AuthenticatedUser } from "../auth/decorators/current-user.decorator.js";
 import { AuditService } from "../audit/audit.service.js";
@@ -30,6 +31,7 @@ import type { CreateEmergencyAccessRequestInput } from "./emergency-access.schem
 const GRANT_LIFETIME_MS = 30 * 60 * 1000;
 const REVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
 const PRESCRIPTION_SUMMARY_LIMIT = 5;
+const MINIMUM_ACTIVE_FACILITY_ADMINS = 2;
 const EMERGENCY_ACCESS_UNAVAILABLE = "Emergency access unavailable.";
 const EMERGENCY_DOCUMENT_VISIBILITY_UNAVAILABLE =
   "Emergency document visibility unavailable.";
@@ -250,6 +252,22 @@ export class EmergencyAccessService {
         facility.facilityType !== expectedFacilityType ||
         facility.verificationStatus !== "verified"
       ) {
+        throw new ForbiddenException(EMERGENCY_ACCESS_UNAVAILABLE);
+      }
+
+      const [activeFacilityAdmins] = await transaction
+        .select({ count: count() })
+        .from(facilityStaffAffiliations)
+        .innerJoin(users, eq(facilityStaffAffiliations.userId, users.id))
+        .where(
+          and(
+            eq(facilityStaffAffiliations.facilityId, facility.id),
+            eq(facilityStaffAffiliations.role, "facility-admin"),
+            eq(facilityStaffAffiliations.status, "active"),
+            eq(users.status, "active"),
+          ),
+        );
+      if (activeFacilityAdmins.count < MINIMUM_ACTIVE_FACILITY_ADMINS) {
         throw new ForbiddenException(EMERGENCY_ACCESS_UNAVAILABLE);
       }
 
