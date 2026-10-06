@@ -56,6 +56,16 @@ describe("Production Safety Validator (Condition 8)", () => {
     ).toThrowError(/Authentication bypass flags are strictly forbidden in production/i);
   });
 
+  it("refuses to boot in production when E2E OTP rate-limit reset is enabled", () => {
+    expect(() =>
+      assertProductionAuthSafety({
+        nodeEnv: "production",
+        smsProviderClassName: "ProductionGupshupSmsProvider",
+        e2eOtpResetEnabled: true,
+      })
+    ).toThrowError(/E2E OTP rate-limit reset is strictly forbidden in production/i);
+  });
+
   it("permits production boot with valid production SMS provider and no shortcuts", () => {
     expect(() =>
       assertProductionAuthSafety({

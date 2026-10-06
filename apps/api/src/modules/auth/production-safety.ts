@@ -10,11 +10,18 @@ export interface AuthSafetyCheckOptions {
   smsProviderClassName: string;
   fixedOtp?: string | undefined;
   bypassAuth?: boolean | string | undefined;
+  e2eOtpResetEnabled?: boolean | undefined;
 }
 
 export function assertProductionAuthSafety(options: AuthSafetyCheckOptions): void {
   const isProduction = options.nodeEnv === "production";
   if (!isProduction) return;
+
+  if (options.e2eOtpResetEnabled) {
+    throw new Error(
+      "[SECURITY INVARIANT VIOLATION] E2E OTP rate-limit reset is strictly forbidden in production!"
+    );
+  }
 
   const disallowedProviders = new Set([
     "ConsoleSmsProvider",

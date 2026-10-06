@@ -18,6 +18,7 @@ assertProductionAuthSafety({
   smsProviderClassName: MailpitSmsProvider.name,
   fixedOtp: process.env.DEV_FIXED_OTP,
   bypassAuth: process.env.BYPASS_AUTH,
+  e2eOtpResetEnabled: env.NODE_ENV === "test",
 });
 
 @Module({

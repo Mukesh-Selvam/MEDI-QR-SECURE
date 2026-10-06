@@ -16,6 +16,10 @@ const webServerEnvironment = {
   KEYCLOAK_REALM: process.env.KEYCLOAK_REALM ?? "mediqr",
   KEYCLOAK_CLIENT_ID: process.env.KEYCLOAK_CLIENT_ID ?? "mediqr-web",
 };
+const apiWebServerEnvironment = {
+  ...webServerEnvironment,
+  NODE_ENV: "test",
+};
 
 export default defineConfig({
   testDir: "./e2e",
@@ -39,7 +43,7 @@ export default defineConfig({
       url: "http://127.0.0.1:3001/health",
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,
-      env: webServerEnvironment,
+      env: apiWebServerEnvironment,
     },
     {
       command: "pnpm --filter @mediqr/web dev",

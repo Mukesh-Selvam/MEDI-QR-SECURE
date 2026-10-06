@@ -236,6 +236,22 @@ describe("AuthService — OTP flow", () => {
     ).rejects.toThrow(BadRequestException);
   });
 
+  it("resets only the E2E client IP's OTP rate-limit and lockout state", async () => {
+    redisStore.set("otp:ip:hashed-ip", "10");
+    redisStore.set("otp:lockout:ip:hashed-ip", "1");
+    redisStore.set("otp:violations:ip:hashed-ip", "2");
+    redisStore.set("otp:send:some-phone-hash", "3");
+    redisStore.set("otp:hmac:some-phone-hash", "otp-hmac");
+
+    await service.resetE2eIpOtpRateLimits(IP_HASH);
+
+    expect(redisStore.has("otp:ip:hashed-ip")).toBe(false);
+    expect(redisStore.has("otp:lockout:ip:hashed-ip")).toBe(false);
+    expect(redisStore.has("otp:violations:ip:hashed-ip")).toBe(false);
+    expect(redisStore.get("otp:send:some-phone-hash")).toBe("3");
+    expect(redisStore.get("otp:hmac:some-phone-hash")).toBe("otp-hmac");
+  });
+
   it("sendOtp: stores only the HMAC — not the raw OTP — in Redis", async () => {
     await service.sendOtp(VALID_PHONE, IP_HASH, REQUEST_ID);
     const phoneHash = createHash("sha256").update(VALID_PHONE).digest("hex");

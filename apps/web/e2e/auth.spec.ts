@@ -106,6 +106,15 @@ async function signInFakeClinician(page: Page): Promise<void> {
 }
 
 test.describe("browser authentication", () => {
+  test.beforeEach(async ({ request }) => {
+    const apiBaseUrl =
+      process.env.API_INTERNAL_URL ?? "http://127.0.0.1:3001";
+    const response = await request.post(
+      `${apiBaseUrl}/api/v1/auth/e2e/reset-otp-rate-limits`,
+    );
+    expect(response.status()).toBe(204);
+  });
+
   test.beforeAll(async ({ browser }) => {
     if (!adminPassword) {
       throw new Error("KEYCLOAK_ADMIN_PASSWORD is required for browser tests.");

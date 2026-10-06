@@ -126,6 +126,14 @@ export class AuthService implements OnModuleDestroy {
     await this.redis.quit();
   }
 
+  async resetE2eIpOtpRateLimits(ipHash: string): Promise<void> {
+    await this.redis.del(
+      otpIpKey(ipHash),
+      otpLockoutIpKey(ipHash),
+      otpViolationsIpKey(ipHash)
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Escalating Lockout Helpers
   // ---------------------------------------------------------------------------

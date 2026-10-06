@@ -15,6 +15,7 @@ import {
   HttpCode,
   HttpStatus,
   Inject,
+  NotFoundException,
   Post,
   Req,
   Res,
@@ -71,6 +72,18 @@ export class AuthController {
       hashIp(ip),
       ua,
       reply
+    );
+  }
+
+  @PublicRoute()
+  @Post("e2e/reset-otp-rate-limits")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async resetE2eOtpRateLimits(
+    @Req() req: FastifyRequest
+  ): Promise<void> {
+    if (env.NODE_ENV !== "test") throw new NotFoundException();
+    await this.authService.resetE2eIpOtpRateLimits(
+      hashIp(req.ip ?? "unknown")
     );
   }
 
