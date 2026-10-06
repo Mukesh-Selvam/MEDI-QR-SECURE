@@ -82,9 +82,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return response;
   } catch (error) {
     if (error instanceof StaffMfaRequiredError) {
-      console.warn("Staff OIDC login did not include MFA evidence.", {
-        methods: error.methods,
-      });
+      console.info("Staff OIDC login requires MFA setup.");
       return failedCallback(config.webOrigin, "mfa-setup");
     }
     console.error("Staff OIDC callback validation failed.", {

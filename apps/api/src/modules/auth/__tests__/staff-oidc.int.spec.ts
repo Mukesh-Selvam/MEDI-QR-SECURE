@@ -14,6 +14,8 @@ import { db, pool } from "../../../database/index.js";
 import { clinicians, users } from "../../../database/schema.js";
 import { AuthModule } from "../auth.module.js";
 import { PatientsModule } from "../../patients/patients.module.js";
+import { EmergencyModule } from "../../emergency/emergency.module.js";
+import { FacilitiesModule } from "../../facilities/facilities.module.js";
 
 interface KeycloakUser {
   id: string;
@@ -37,7 +39,9 @@ interface TokenResponse {
   access_token: string;
 }
 
-@Module({ imports: [AuthModule, PatientsModule] })
+@Module({
+  imports: [AuthModule, PatientsModule, EmergencyModule, FacilitiesModule],
+})
 class StaffOidcIntegrationModule {}
 
 describe("Staff Keycloak token validation (integration)", () => {
@@ -130,19 +134,96 @@ describe("Staff Keycloak token validation (integration)", () => {
       throw new Error("The fake clinician or Keycloak access token was not initialized.");
     }
 
+    const facilityId = randomUUID();
+    const affiliationId = randomUUID();
+    const facilityAdminId = randomUUID();
+    const documentId = randomUUID();
+    const patientId = randomUUID();
+    const requestId = randomUUID();
     const responses = await Promise.all([
       fastify.inject({
         method: "GET",
-        url: `/api/v1/patients/${randomUUID()}`,
+        url: `/api/v1/patients/${patientId}`,
         headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
       }),
       fastify.inject({
         method: "GET",
-        url: `/api/v1/patients/${randomUUID()}/records`,
+        url: `/api/v1/patients/${patientId}/records`,
+        headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
+      }),
+      fastify.inject({
+        method: "GET",
+        url: `/api/v1/emergency/profiles/${patientId}`,
+        headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
+      }),
+      fastify.inject({
+        method: "POST",
+        url: `/api/v1/emergency-access/facilities/${facilityId}/requests`,
+        headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
+        payload: {
+          resolutionId: randomUUID(),
+          reasonCode: "GUARDIAN_UNAVAILABLE",
+        },
+      }),
+      fastify.inject({
+        method: "GET",
+        url: `/api/v1/emergency-access/requests/${requestId}/summary`,
+        headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
+      }),
+      fastify.inject({
+        method: "PATCH",
+        url: `/api/v1/emergency-access/documents/${documentId}/visibility`,
+        headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
+        payload: { emergencyVisible: true },
+      }),
+      fastify.inject({
+        method: "POST",
+        url: "/api/v1/facilities",
+        headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
+        payload: {
+          facilityType: "pharmacy",
+          displayName: "FAKE MFA test facility",
+          registrationNumber: `FAKE-${randomUUID()}`,
+          registrationJurisdiction: "FAKE",
+        },
+      }),
+      fastify.inject({
+        method: "POST",
+        url: `/api/v1/facilities/${facilityId}/administrators`,
+        headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
+        payload: { userId: facilityAdminId },
+      }),
+      fastify.inject({
+        method: "PATCH",
+        url: `/api/v1/facilities/${facilityId}/verification`,
+        headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
+        payload: { status: "verified" },
+      }),
+      fastify.inject({
+        method: "POST",
+        url: `/api/v1/facilities/${facilityId}/affiliations`,
+        headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
+        payload: { userId: randomUUID() },
+      }),
+      fastify.inject({
+        method: "PATCH",
+        url: `/api/v1/facilities/${facilityId}/affiliations/${affiliationId}/activate`,
+        headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
+      }),
+      fastify.inject({
+        method: "PATCH",
+        url: `/api/v1/facilities/${facilityId}/affiliations/${affiliationId}/suspend`,
+        headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
+      }),
+      fastify.inject({
+        method: "DELETE",
+        url: `/api/v1/facilities/${facilityId}/affiliations/${affiliationId}`,
         headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
       }),
     ]);
-    expect(responses.map((response) => response.statusCode)).toEqual([401, 401]);
+    expect(responses.map((response) => response.statusCode)).toEqual(
+      Array.from({ length: 13 }, () => 401),
+    );
     expect(localUserId).toBeDefined();
   });
 

@@ -308,6 +308,12 @@ test.describe("browser authentication", () => {
     await page.locator("#saveTOTPBtn").click();
 
     await expect(page).toHaveURL(/\/login\/clinician\?auth=mfa-setup/);
+    const cookiesAfterMfaSetup = await page.context().cookies();
+    expect(
+      cookiesAfterMfaSetup.some(
+        ({ name }) => name === "__Host-mediqr-access",
+      ),
+    ).toBe(false);
     await page.goto("/login/clinician");
     await page
       .getByRole("link", { name: "Continue with secure sign-in" })
