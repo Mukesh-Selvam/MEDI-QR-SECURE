@@ -11,7 +11,7 @@ Last reviewed: 2026-10-04
 
 - Staff affiliations are activated only by the invited user after validated Keycloak MFA evidence. Invitation tokens are single-use, expire after 24 hours, are stored as hashes, and are delivered to the invitee through the email-provider interface. Production invitations remain unavailable until production email delivery is implemented.
 - Facility administration does not enforce last-administrator protection or require two active facility administrators before emergency eligibility.
-- Suspending an affiliation makes subsequent emergency-summary authorization checks deny access, but does not persistently revoke existing grant rows or emit a grant-revocation audit event.
+- Staff affiliation suspension or revocation now transactionally revokes the staff member's active emergency grants and records opaque-ID revocation audit events. Reinstating the affiliation does not reactivate those grants; any new emergency request must go through the usual request flow.
 - Facility verification still needs an authoritative verification process and production evidence. A facility administrator cannot verify their own facility; verification status changes are restricted to platform administrators.
 - Emergency-access abuse controls are incomplete: provider and patient rate caps, daily provider caps, anomaly detection (many patients, repeated attempts, and off-hours), and automatic suspension thresholds are not implemented.
 - The admin console is incomplete: verification and break-glass review queues, review escalation, audit exploration, and audit-chain status visibility remain outstanding. Every grant must be reviewed within 24 hours; overdue escalation to a second platform administrator or compliance role is not yet implemented.

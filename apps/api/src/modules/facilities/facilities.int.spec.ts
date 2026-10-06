@@ -13,9 +13,11 @@ import {
 import { db } from "../../database/index.js";
 import {
   auditEvents,
+  emergencyAccessRequests,
   facilities,
   facilityStaffAffiliations,
   facilityStaffInvitations,
+  patients,
   users,
 } from "../../database/schema.js";
 import { AuditService } from "../audit/audit.service.js";
@@ -107,6 +109,9 @@ describe("Facility verification and affiliations (integration)", () => {
 
   afterAll(async () => {
     if (facilityIds.length > 0) {
+      await db
+        .delete(emergencyAccessRequests)
+        .where(inArray(emergencyAccessRequests.facilityId, facilityIds));
       await db
         .delete(facilityStaffAffiliations)
         .where(inArray(facilityStaffAffiliations.facilityId, facilityIds));
@@ -518,5 +523,299 @@ describe("Facility verification and affiliations (integration)", () => {
       "127.0.0.1",
     );
     expect(platformSuspended.status).toBe("suspended");
+  });
+
+  it("revokes active emergency grants transactionally and never restores old grants", async () => {
+    const facility = await service.createFacility(
+      {
+        facilityType: "hospital-emergency-department",
+        displayName: `FAKE Grant Revocation Hospital ${suffix}`,
+        registrationNumber: `FAKE-GRANT-REVOKE-${suffix}`,
+        registrationJurisdiction: "FAKE-IND",
+      },
+      platformAdmin,
+      "127.0.0.1",
+    );
+    facilityIds.push(facility.id);
+    await service.changeVerification(
+      facility.id,
+      { status: "verified" },
+      platformAdmin,
+      "127.0.0.1",
+    );
+
+    const [staff] = await db
+      .insert(users)
+      .values({ role: "emergency-department-staff", status: "active" })
+      .returning({ id: users.id });
+    const [patientUser] = await db
+      .insert(users)
+      .values({ role: "patient", status: "active" })
+      .returning({ id: users.id });
+    if (!staff || !patientUser) {
+      throw new Error("Fake grant-revocation users were not created.");
+    }
+    userIds.push(staff.id, patientUser.id);
+
+    const [patient] = await db
+      .insert(patients)
+      .values({
+        userId: patientUser.id,
+        healthId: `FAKE-GRANT-REVOKE-${suffix}`,
+        fullName: "Fake Grant Revocation Patient",
+        phoneHash: suffix.replaceAll("-", "").padEnd(64, "0").slice(0, 64),
+        encryptedPhone: "fake-test-ciphertext",
+      })
+      .returning({ id: patients.id });
+    if (!patient)
+      throw new Error("Fake grant-revocation patient was not created.");
+
+    const [affiliation] = await db
+      .insert(facilityStaffAffiliations)
+      .values({
+        facilityId: facility.id,
+        userId: staff.id,
+        role: "emergency-department-staff",
+        status: "active",
+      })
+      .returning({ id: facilityStaffAffiliations.id });
+    if (!affiliation) {
+      throw new Error("Fake active staff affiliation was not created.");
+    }
+
+    const now = new Date();
+    const expiredGrantedAt = new Date(now.getTime() - 60 * 60 * 1000);
+    const [activeGrant, secondActiveGrant, expiredGrant] = await db
+      .insert(emergencyAccessRequests)
+      .values([
+        {
+          patientId: patient.id,
+          requesterUserId: staff.id,
+          facilityId: facility.id,
+          providerType: "hospital-emergency-department",
+          reasonCode: "TIME_CRITICAL_EMERGENCY_CARE",
+          status: "granted",
+          grantedAt: now,
+          expiresAt: new Date(now.getTime() + 30 * 60 * 1000),
+        },
+        {
+          patientId: patient.id,
+          requesterUserId: staff.id,
+          facilityId: facility.id,
+          providerType: "hospital-emergency-department",
+          reasonCode: "GUARDIAN_UNAVAILABLE",
+          status: "granted",
+          grantedAt: now,
+          expiresAt: new Date(now.getTime() + 30 * 60 * 1000),
+        },
+        {
+          patientId: patient.id,
+          requesterUserId: staff.id,
+          facilityId: facility.id,
+          providerType: "hospital-emergency-department",
+          reasonCode: "TIME_CRITICAL_EMERGENCY_CARE",
+          status: "granted",
+          grantedAt: expiredGrantedAt,
+          expiresAt: new Date(expiredGrantedAt.getTime() + 30 * 60 * 1000),
+        },
+      ])
+      .returning({ id: emergencyAccessRequests.id });
+    if (!activeGrant || !secondActiveGrant || !expiredGrant) {
+      throw new Error("Fake emergency grant fixtures were not created.");
+    }
+
+    const audit = new AuditService();
+    const failingAudit: Pick<AuditService, "hashIp" | "logInTransaction"> = {
+      hashIp: (ip) => audit.hashIp(ip),
+      logInTransaction: async (event, transaction) => {
+        if (event.action === "EMERGENCY_ACCESS_REVOKED_STAFF_AFFILIATION") {
+          throw new Error("Emergency revocation audit unavailable.");
+        }
+        return audit.logInTransaction(event, transaction);
+      },
+    };
+    const failingService = new FacilitiesService(failingAudit, emailProvider);
+    await expect(
+      failingService.updateStaffAffiliation(
+        facility.id,
+        affiliation.id,
+        "suspend",
+        platformAdmin,
+        "127.0.0.1",
+      ),
+    ).rejects.toThrow("Emergency revocation audit unavailable.");
+
+    const [unmodifiedAffiliation] = await db
+      .select({ status: facilityStaffAffiliations.status })
+      .from(facilityStaffAffiliations)
+      .where(eq(facilityStaffAffiliations.id, affiliation.id));
+    const grantsAfterRollback = await db
+      .select({
+        id: emergencyAccessRequests.id,
+        status: emergencyAccessRequests.status,
+      })
+      .from(emergencyAccessRequests)
+      .where(
+        inArray(emergencyAccessRequests.id, [
+          activeGrant.id,
+          secondActiveGrant.id,
+          expiredGrant.id,
+        ]),
+      );
+    expect(unmodifiedAffiliation?.status).toBe("active");
+    expect(grantsAfterRollback).toEqual(
+      expect.arrayContaining([
+        { id: activeGrant.id, status: "granted" },
+        { id: secondActiveGrant.id, status: "granted" },
+        { id: expiredGrant.id, status: "granted" },
+      ]),
+    );
+
+    await service.updateStaffAffiliation(
+      facility.id,
+      affiliation.id,
+      "suspend",
+      platformAdmin,
+      "127.0.0.1",
+    );
+    const grantsAfterSuspension = await db
+      .select({
+        id: emergencyAccessRequests.id,
+        status: emergencyAccessRequests.status,
+        revokedAt: emergencyAccessRequests.revokedAt,
+      })
+      .from(emergencyAccessRequests)
+      .where(
+        inArray(emergencyAccessRequests.id, [
+          activeGrant.id,
+          secondActiveGrant.id,
+          expiredGrant.id,
+        ]),
+      );
+    expect(grantsAfterSuspension).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: activeGrant.id,
+          status: "revoked",
+          revokedAt: expect.any(Date),
+        }),
+        expect.objectContaining({
+          id: secondActiveGrant.id,
+          status: "revoked",
+          revokedAt: expect.any(Date),
+        }),
+        { id: expiredGrant.id, status: "granted", revokedAt: null },
+      ]),
+    );
+
+    const initialRevocationAudits = await db
+      .select({
+        actorId: auditEvents.actorId,
+        action: auditEvents.action,
+        resourceId: auditEvents.resourceId,
+      })
+      .from(auditEvents)
+      .where(
+        and(
+          inArray(auditEvents.resourceId, [
+            affiliation.id,
+            activeGrant.id,
+            secondActiveGrant.id,
+            expiredGrant.id,
+          ]),
+          eq(auditEvents.action, "EMERGENCY_ACCESS_REVOKED_STAFF_AFFILIATION"),
+        ),
+      );
+    expect(initialRevocationAudits).toEqual(
+      expect.arrayContaining([
+        {
+          actorId: platformAdmin.id,
+          action: "EMERGENCY_ACCESS_REVOKED_STAFF_AFFILIATION",
+          resourceId: activeGrant.id,
+        },
+        {
+          actorId: platformAdmin.id,
+          action: "EMERGENCY_ACCESS_REVOKED_STAFF_AFFILIATION",
+          resourceId: secondActiveGrant.id,
+        },
+      ]),
+    );
+    expect(initialRevocationAudits).toHaveLength(2);
+
+    await db
+      .update(facilityStaffAffiliations)
+      .set({ status: "active", platformSuspended: false })
+      .where(eq(facilityStaffAffiliations.id, affiliation.id));
+    const oldGrantAfterReinstatement = await db
+      .select({
+        id: emergencyAccessRequests.id,
+        status: emergencyAccessRequests.status,
+        revokedAt: emergencyAccessRequests.revokedAt,
+      })
+      .from(emergencyAccessRequests)
+      .where(eq(emergencyAccessRequests.id, activeGrant.id));
+    expect(oldGrantAfterReinstatement[0]).toMatchObject({
+      id: activeGrant.id,
+      status: "revoked",
+    });
+    expect(oldGrantAfterReinstatement[0]?.revokedAt).toBeInstanceOf(Date);
+
+    const reinstatedAt = new Date();
+    const [newGrant] = await db
+      .insert(emergencyAccessRequests)
+      .values({
+        patientId: patient.id,
+        requesterUserId: staff.id,
+        facilityId: facility.id,
+        providerType: "hospital-emergency-department",
+        reasonCode: "TIME_CRITICAL_EMERGENCY_CARE",
+        status: "granted",
+        grantedAt: reinstatedAt,
+        expiresAt: new Date(reinstatedAt.getTime() + 30 * 60 * 1000),
+      })
+      .returning({ id: emergencyAccessRequests.id });
+    if (!newGrant) throw new Error("Post-reinstatement grant was not created.");
+
+    await service.updateStaffAffiliation(
+      facility.id,
+      affiliation.id,
+      "revoke",
+      platformAdmin,
+      "127.0.0.1",
+    );
+    const revokedAfterRevoke = await db
+      .select({
+        id: emergencyAccessRequests.id,
+        status: emergencyAccessRequests.status,
+      })
+      .from(emergencyAccessRequests)
+      .where(
+        inArray(emergencyAccessRequests.id, [
+          activeGrant.id,
+          secondActiveGrant.id,
+          newGrant.id,
+        ]),
+      );
+    expect(revokedAfterRevoke).toEqual(
+      expect.arrayContaining([
+        { id: activeGrant.id, status: "revoked" },
+        { id: secondActiveGrant.id, status: "revoked" },
+        { id: newGrant.id, status: "revoked" },
+      ]),
+    );
+    const finalRevocationAudits = await db
+      .select({ resourceId: auditEvents.resourceId })
+      .from(auditEvents)
+      .where(
+        and(
+          inArray(auditEvents.resourceId, [
+            activeGrant.id,
+            secondActiveGrant.id,
+            newGrant.id,
+          ]),
+          eq(auditEvents.action, "EMERGENCY_ACCESS_REVOKED_STAFF_AFFILIATION"),
+        ),
+      );
+    expect(finalRevocationAudits).toHaveLength(3);
   });
 });

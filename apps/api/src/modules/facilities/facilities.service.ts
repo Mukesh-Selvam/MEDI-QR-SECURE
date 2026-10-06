@@ -8,9 +8,10 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { createHash, randomBytes } from "node:crypto";
-import { and, count, eq } from "drizzle-orm";
+import { and, count, eq, gt } from "drizzle-orm";
 import { db } from "../../database/index.js";
 import {
+  emergencyAccessRequests,
   facilities,
   facilityStaffAffiliations,
   facilityStaffInvitations,
@@ -605,6 +606,12 @@ export class FacilitiesService {
         mutation === "suspend" && actor.role === "platform-admin"
           ? true
           : affiliation.platformSuspended;
+      const shouldRevokeEmergencyGrants =
+        affiliation.role !== "facility-admin" &&
+        (affiliation.status !== nextStatus ||
+          (mutation === "suspend" &&
+            actor.role === "platform-admin" &&
+            !affiliation.platformSuspended));
 
       const [updated] = await transaction
         .update(facilityStaffAffiliations)
@@ -612,6 +619,35 @@ export class FacilitiesService {
         .where(eq(facilityStaffAffiliations.id, affiliationId))
         .returning();
       if (!updated) throw new Error("Affiliation update returned no record.");
+
+      if (shouldRevokeEmergencyGrants) {
+        const now = new Date();
+        const revokedGrants = await transaction
+          .update(emergencyAccessRequests)
+          .set({ status: "revoked", revokedAt: now })
+          .where(
+            and(
+              eq(emergencyAccessRequests.requesterUserId, affiliation.userId),
+              eq(emergencyAccessRequests.status, "granted"),
+              gt(emergencyAccessRequests.expiresAt, now),
+            ),
+          )
+          .returning({ id: emergencyAccessRequests.id });
+
+        for (const grant of revokedGrants) {
+          await this.writeAudit(
+            {
+              actor,
+              action: "EMERGENCY_ACCESS_REVOKED_STAFF_AFFILIATION",
+              resourceType: "emergency_access_request",
+              resourceId: grant.id,
+              ip,
+              userAgent,
+            },
+            transaction,
+          );
+        }
+      }
 
       await this.writeAudit(
         {
