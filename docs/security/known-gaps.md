@@ -5,11 +5,11 @@ Last reviewed: 2026-10-04
 ## Runtime and key management
 
 - The API's `LocalKmsAdapter` is development-only and fails startup in production. No cloud KMS adapter is implemented yet. Production deployment must wait until a managed KMS adapter, key rotation, and its integration tests are in place. See `apps/api/src/modules/vault/kms/local-kms.adapter.ts`.
-- Production notification delivery is not implemented: production uses the `NoopNotificationEmailProvider`, and there is no SMS or push provider. Emergency-access delivery and the operational response to undelivered notifications must be implemented and tested before production use.
+- Production notification delivery is not implemented: production uses the `NoopNotificationEmailProvider`, and there is no SMS or push provider. Staff invitations are delivered through the email-provider interface in development (Mailpit); invitation creation fails closed while the provider is disabled. Implement and test a production email provider and the operational response to undelivered notifications before production use.
 
 ## Emergency access and affiliations
 
-- Facility affiliation onboarding does not yet use named-staff invitations accepted by the invited staff member after a verified Keycloak MFA claim. The current affiliation flow associates existing user IDs and does not independently verify an observed MFA claim.
+- Staff affiliations are activated only by the invited user after validated Keycloak MFA evidence. Invitation tokens are single-use, expire after 24 hours, are stored as hashes, and are delivered to the invitee through the email-provider interface. Production invitations remain unavailable until production email delivery is implemented.
 - Facility administration does not enforce last-administrator protection or require two active facility administrators before emergency eligibility.
 - Suspending an affiliation makes subsequent emergency-summary authorization checks deny access, but does not persistently revoke existing grant rows or emit a grant-revocation audit event.
 - Facility verification still needs an authoritative verification process and production evidence. A facility administrator cannot verify their own facility; verification status changes are restricted to platform administrators.

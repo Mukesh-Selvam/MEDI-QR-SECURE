@@ -9,9 +9,17 @@ export interface NotificationEmail {
   createdAt: Date;
 }
 
+export interface StaffInvitationEmail {
+  recipient: string;
+  invitationId: string;
+  invitationToken: string;
+  expiresAt: Date;
+}
+
 export interface NotificationEmailProvider {
   readonly enabled: boolean;
   send(notification: NotificationEmail): Promise<void>;
+  sendStaffInvitation(invitation: StaffInvitationEmail): Promise<void>;
 }
 
 export class NotificationEmailDeliveryError extends Error {

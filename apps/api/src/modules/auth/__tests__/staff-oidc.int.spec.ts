@@ -64,7 +64,9 @@ describe("Staff Keycloak token validation (integration)", () => {
 
   beforeAll(async () => {
     if (!adminPassword) {
-      throw new Error("KEYCLOAK_ADMIN_PASSWORD is required for this integration test.");
+      throw new Error(
+        "KEYCLOAK_ADMIN_PASSWORD is required for this integration test.",
+      );
     }
     adminToken = await getAdminToken();
     await createTokenTestClient();
@@ -74,14 +76,13 @@ describe("Staff Keycloak token validation (integration)", () => {
     staffAccessToken = await getClinicianToken();
     app = await NestFactory.create<NestFastifyApplication>(
       StaffOidcIntegrationModule,
-      new FastifyAdapter({ logger: false })
+      new FastifyAdapter({ logger: false }),
     );
     await app.register(fastifyCookie, { secret: env.SESSION_SECRET });
     app.setGlobalPrefix("api/v1");
     await app.init();
     fastify = app.getHttpAdapter().getInstance();
     await fastify.ready();
-
   }, 90000);
 
   afterAll(async () => {
@@ -96,33 +97,42 @@ describe("Staff Keycloak token validation (integration)", () => {
       });
     } else if (adminToken) {
       const search = await keycloakRequest(
-        `/admin/realms/${realm}/users?username=${encodeURIComponent(username)}&exact=true`
+        `/admin/realms/${realm}/users?username=${encodeURIComponent(username)}&exact=true`,
       );
       if (search.ok) {
         const users = (await search.json()) as KeycloakUser[];
         const createdUserId = users[0]?.id;
         if (createdUserId) {
-          await keycloakRequest(`/admin/realms/${realm}/users/${createdUserId}`, {
-            method: "DELETE",
-          });
+          await keycloakRequest(
+            `/admin/realms/${realm}/users/${createdUserId}`,
+            {
+              method: "DELETE",
+            },
+          );
         }
       }
     }
     if (adminToken && keycloakClientId) {
-      await keycloakRequest(`/admin/realms/${realm}/clients/${keycloakClientId}`, {
-        method: "DELETE",
-      });
+      await keycloakRequest(
+        `/admin/realms/${realm}/clients/${keycloakClientId}`,
+        {
+          method: "DELETE",
+        },
+      );
     } else if (adminToken) {
       const search = await keycloakRequest(
-        `/admin/realms/${realm}/clients?clientId=${encodeURIComponent(testClientId)}`
+        `/admin/realms/${realm}/clients?clientId=${encodeURIComponent(testClientId)}`,
       );
       if (search.ok) {
         const clients = (await search.json()) as KeycloakClient[];
         const createdClientId = clients[0]?.id;
         if (createdClientId) {
-          await keycloakRequest(`/admin/realms/${realm}/clients/${createdClientId}`, {
-            method: "DELETE",
-          });
+          await keycloakRequest(
+            `/admin/realms/${realm}/clients/${createdClientId}`,
+            {
+              method: "DELETE",
+            },
+          );
         }
       }
     }
@@ -131,7 +141,9 @@ describe("Staff Keycloak token validation (integration)", () => {
 
   it("rejects a Keycloak password-only token without MFA evidence", async () => {
     if (!fastify || !staffAccessToken) {
-      throw new Error("The fake clinician or Keycloak access token was not initialized.");
+      throw new Error(
+        "The fake clinician or Keycloak access token was not initialized.",
+      );
     }
 
     const facilityId = randomUUID();
@@ -155,6 +167,17 @@ describe("Staff Keycloak token validation (integration)", () => {
         method: "GET",
         url: `/api/v1/emergency/profiles/${patientId}`,
         headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
+      }),
+      fastify.inject({
+        method: "PUT",
+        url: `/api/v1/emergency/profiles/${patientId}`,
+        headers: { cookie: `__Host-mediqr-access=${staffAccessToken}` },
+        payload: {
+          bloodGroup: "O+",
+          allergies: [],
+          emergencyContacts: [],
+          enabled: true,
+        },
       }),
       fastify.inject({
         method: "POST",
@@ -223,7 +246,7 @@ describe("Staff Keycloak token validation (integration)", () => {
       }),
     ]);
     expect(responses.map((response) => response.statusCode)).toEqual(
-      Array.from({ length: 13 }, () => 401),
+      Array.from({ length: 14 }, () => 401),
     );
     expect(localUserId).toBeDefined();
   });
@@ -240,10 +263,12 @@ describe("Staff Keycloak token validation (integration)", () => {
           username: adminUsername,
           password: adminPassword!,
         }),
-      }
+      },
     );
     if (!response.ok) {
-      throw new Error("Could not authenticate the Keycloak integration-test administrator.");
+      throw new Error(
+        "Could not authenticate the Keycloak integration-test administrator.",
+      );
     }
     return ((await response.json()) as TokenResponse).access_token;
   }
@@ -276,36 +301,46 @@ describe("Staff Keycloak token validation (integration)", () => {
     expect(response.status).toBe(201);
 
     const search = await keycloakRequest(
-      `/admin/realms/${realm}/clients?clientId=${encodeURIComponent(testClientId)}`
+      `/admin/realms/${realm}/clients?clientId=${encodeURIComponent(testClientId)}`,
     );
     expect(search.status).toBe(200);
     keycloakClientId = ((await search.json()) as KeycloakClient[])[0]?.id;
-    if (!keycloakClientId) throw new Error("Keycloak did not create the test client.");
+    if (!keycloakClientId)
+      throw new Error("Keycloak did not create the test client.");
   }
 
   async function createKeycloakClinician(): Promise<string> {
-    const createResponse = await keycloakRequest(`/admin/realms/${realm}/users`, {
-      method: "POST",
-      body: JSON.stringify({ username, email, enabled: true, emailVerified: true }),
-    });
+    const createResponse = await keycloakRequest(
+      `/admin/realms/${realm}/users`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          username,
+          email,
+          enabled: true,
+          emailVerified: true,
+        }),
+      },
+    );
     expect(createResponse.status).toBe(201);
 
     const search = await keycloakRequest(
-      `/admin/realms/${realm}/users?username=${encodeURIComponent(username)}&exact=true`
+      `/admin/realms/${realm}/users?username=${encodeURIComponent(username)}&exact=true`,
     );
     expect(search.status).toBe(200);
     const user = ((await search.json()) as KeycloakUser[])[0];
-    if (!user?.id) throw new Error("Keycloak did not create the fake clinician.");
+    if (!user?.id)
+      throw new Error("Keycloak did not create the fake clinician.");
     keycloakUserId = user.id;
 
     const roleResponse = await keycloakRequest(
-      `/admin/realms/${realm}/roles/platform-admin`
+      `/admin/realms/${realm}/roles/platform-admin`,
     );
     expect(roleResponse.status).toBe(200);
     const role = (await roleResponse.json()) as KeycloakRole;
     const mappingResponse = await keycloakRequest(
       `/admin/realms/${realm}/users/${user.id}/role-mappings/realm`,
-      { method: "POST", body: JSON.stringify([role]) }
+      { method: "POST", body: JSON.stringify([role]) },
     );
     expect(mappingResponse.status).toBe(204);
 
@@ -322,7 +357,7 @@ describe("Staff Keycloak token validation (integration)", () => {
           value: password,
           temporary: false,
         }),
-      }
+      },
     );
     expect(passwordResponse.status).toBe(204);
     return user.id;
@@ -338,7 +373,10 @@ describe("Staff Keycloak token validation (integration)", () => {
         status: "active",
       })
       .returning({ id: users.id });
-    if (!user) throw new Error("Could not seed the fake clinician in the local database.");
+    if (!user)
+      throw new Error(
+        "Could not seed the fake clinician in the local database.",
+      );
     localUserId = user.id;
 
     await db.insert(clinicians).values({
@@ -362,7 +400,7 @@ describe("Staff Keycloak token validation (integration)", () => {
           username,
           password,
         }),
-      }
+      },
     );
     expect(response.status).toBe(200);
     return ((await response.json()) as TokenResponse).access_token;
@@ -370,9 +408,10 @@ describe("Staff Keycloak token validation (integration)", () => {
 
   async function keycloakRequest(
     path: string,
-    init: RequestInit = {}
+    init: RequestInit = {},
   ): Promise<Response> {
-    if (!adminToken) throw new Error("Keycloak integration-test admin token is unavailable.");
+    if (!adminToken)
+      throw new Error("Keycloak integration-test admin token is unavailable.");
     return fetch(`${keycloakBaseUrl}${path}`, {
       ...init,
       headers: {

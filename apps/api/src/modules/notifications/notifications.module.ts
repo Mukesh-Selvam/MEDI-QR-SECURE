@@ -20,6 +20,6 @@ import { NotificationsService } from "./notifications.service.js";
           : new NoopNotificationEmailProvider(),
     },
   ],
-  exports: [NotificationsService],
+  exports: [NotificationsService, NOTIFICATION_EMAIL_PROVIDER],
 })
 export class NotificationsModule {}

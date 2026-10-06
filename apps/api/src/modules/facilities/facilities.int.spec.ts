@@ -1,6 +1,15 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { FastifyRequest } from "fastify";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { db } from "../../database/index.js";
 import {
   auditEvents,
@@ -11,11 +20,25 @@ import {
 } from "../../database/schema.js";
 import { AuditService } from "../audit/audit.service.js";
 import type { AuthenticatedUser } from "../auth/decorators/current-user.decorator.js";
+import {
+  type NotificationEmailProvider,
+  type StaffInvitationEmail,
+} from "../notifications/notification-email.provider.js";
+import { FacilitiesController } from "./facilities.controller.js";
 import { FacilitiesService } from "./facilities.service.js";
 
 describe("Facility verification and affiliations (integration)", () => {
   const suffix = randomUUID();
-  const service = new FacilitiesService(new AuditService());
+  const deliveredInvitations: StaffInvitationEmail[] = [];
+  const emailProvider: NotificationEmailProvider = {
+    enabled: true,
+    send: vi.fn().mockResolvedValue(undefined),
+    sendStaffInvitation: vi.fn(async (invitation) => {
+      deliveredInvitations.push(invitation);
+    }),
+  };
+  const service = new FacilitiesService(new AuditService(), emailProvider);
+  const controller = new FacilitiesController(service);
   const userIds: string[] = [];
   const facilityIds: string[] = [];
   let platformAdmin: AuthenticatedUser;
@@ -24,6 +47,8 @@ describe("Facility verification and affiliations (integration)", () => {
   let edStaffId: string;
   let pharmacyStaffId: string;
 
+  afterEach(() => vi.restoreAllMocks());
+
   beforeAll(async () => {
     const created = await db
       .insert(users)
@@ -31,8 +56,16 @@ describe("Facility verification and affiliations (integration)", () => {
         { role: "platform-admin", status: "active" },
         { role: "facility-admin", status: "active" },
         { role: "facility-admin", status: "active" },
-        { role: "emergency-department-staff", status: "active" },
-        { role: "pharmacy-staff", status: "active" },
+        {
+          role: "emergency-department-staff",
+          status: "active",
+          email: `fake-ed-staff-${suffix}@mediqr.invalid`,
+        },
+        {
+          role: "pharmacy-staff",
+          status: "active",
+          email: `fake-pharmacy-staff-${suffix}@mediqr.invalid`,
+        },
       ])
       .returning({ id: users.id, role: users.role });
 
@@ -176,14 +209,58 @@ describe("Facility verification and affiliations (integration)", () => {
       ),
     ).rejects.toThrow("cannot create or manage facility-administrator");
 
-    const staffAffiliation = await service.createStaffAffiliation(
+    const consoleSpies = [
+      vi.spyOn(console, "log"),
+      vi.spyOn(console, "info"),
+      vi.spyOn(console, "warn"),
+      vi.spyOn(console, "error"),
+    ];
+    const staffInvitationResponse = await controller.createStaffAffiliation(
       facility.id,
       { userId: edStaffId },
       facilityAdmin,
-      "127.0.0.1",
+      {
+        ip: "127.0.0.1",
+        headers: {},
+      } as FastifyRequest,
     );
-    expect(staffAffiliation.status).toBe("pending");
-    expect(staffAffiliation.role).toBe("emergency-department-staff");
+    expect(staffInvitationResponse).toEqual({
+      invitationId: expect.any(String),
+      status: "pending",
+    });
+    const staffInvitation = deliveredInvitations.find(
+      ({ invitationId }) =>
+        invitationId === staffInvitationResponse.invitationId,
+    );
+    if (!staffInvitation) {
+      throw new Error("The staff invitation was not delivered.");
+    }
+    const invitationToken = staffInvitation.invitationToken;
+    expect(JSON.stringify(staffInvitationResponse)).not.toContain(
+      invitationToken,
+    );
+    const [pendingAffiliation] = await db
+      .select()
+      .from(facilityStaffAffiliations)
+      .where(
+        and(
+          eq(facilityStaffAffiliations.facilityId, facility.id),
+          eq(facilityStaffAffiliations.userId, edStaffId),
+        ),
+      );
+    if (!pendingAffiliation) {
+      throw new Error("The pending staff affiliation was not created.");
+    }
+    expect(pendingAffiliation.status).toBe("pending");
+    expect(pendingAffiliation.role).toBe("emergency-department-staff");
+    const [storedInvitation] = await db
+      .select({ tokenHash: facilityStaffInvitations.tokenHash })
+      .from(facilityStaffInvitations)
+      .where(eq(facilityStaffInvitations.id, staffInvitation.invitationId));
+    expect(storedInvitation?.tokenHash).toBe(
+      createHash("sha256").update(invitationToken).digest("hex"),
+    );
+    expect(storedInvitation?.tokenHash).not.toBe(invitationToken);
 
     const invitedStaff: AuthenticatedUser = {
       id: edStaffId,
@@ -194,8 +271,8 @@ describe("Facility verification and affiliations (integration)", () => {
     await expect(
       service.acceptStaffInvitation(
         facility.id,
-        staffAffiliation.id,
-        { invitationToken: staffAffiliation.invitationToken },
+        pendingAffiliation.id,
+        { invitationToken },
         facilityAdmin,
         "127.0.0.1",
       ),
@@ -203,8 +280,8 @@ describe("Facility verification and affiliations (integration)", () => {
     await expect(
       service.acceptStaffInvitation(
         facility.id,
-        staffAffiliation.id,
-        { invitationToken: staffAffiliation.invitationToken },
+        pendingAffiliation.id,
+        { invitationToken },
         {
           id: pharmacyStaffId,
           sub: pharmacyStaffId,
@@ -217,8 +294,8 @@ describe("Facility verification and affiliations (integration)", () => {
     await expect(
       service.acceptStaffInvitation(
         facility.id,
-        staffAffiliation.id,
-        { invitationToken: staffAffiliation.invitationToken },
+        pendingAffiliation.id,
+        { invitationToken },
         { ...invitedStaff, isMfaVerified: false },
         "127.0.0.1",
       ),
@@ -227,14 +304,12 @@ describe("Facility verification and affiliations (integration)", () => {
     await db
       .update(facilityStaffInvitations)
       .set({ expiresAt: new Date(Date.now() - 1_000) })
-      .where(
-        eq(facilityStaffInvitations.affiliationId, staffAffiliation.id),
-      );
+      .where(eq(facilityStaffInvitations.id, staffInvitation.invitationId));
     await expect(
       service.acceptStaffInvitation(
         facility.id,
-        staffAffiliation.id,
-        { invitationToken: staffAffiliation.invitationToken },
+        pendingAffiliation.id,
+        { invitationToken },
         invitedStaff,
         "127.0.0.1",
       ),
@@ -242,14 +317,12 @@ describe("Facility verification and affiliations (integration)", () => {
     await db
       .update(facilityStaffInvitations)
       .set({ expiresAt: new Date(Date.now() + 60_000) })
-      .where(
-        eq(facilityStaffInvitations.affiliationId, staffAffiliation.id),
-      );
+      .where(eq(facilityStaffInvitations.id, staffInvitation.invitationId));
 
     const activeAffiliation = await service.acceptStaffInvitation(
       facility.id,
-      staffAffiliation.id,
-      { invitationToken: staffAffiliation.invitationToken },
+      pendingAffiliation.id,
+      { invitationToken },
       invitedStaff,
       "127.0.0.1",
     );
@@ -257,8 +330,8 @@ describe("Facility verification and affiliations (integration)", () => {
     await expect(
       service.acceptStaffInvitation(
         facility.id,
-        staffAffiliation.id,
-        { invitationToken: staffAffiliation.invitationToken },
+        pendingAffiliation.id,
+        { invitationToken },
         invitedStaff,
         "127.0.0.1",
       ),
@@ -281,12 +354,15 @@ describe("Facility verification and affiliations (integration)", () => {
       secondFacilityAdmin,
       "127.0.0.1",
     );
-    expect(pharmacyAffiliation.role).toBe("pharmacy-staff");
+    expect(pharmacyAffiliation).toEqual({
+      invitationId: expect.any(String),
+      status: "pending",
+    });
     expect(pharmacyAffiliation.status).toBe("pending");
 
     const locallySuspended = await service.updateStaffAffiliation(
       facility.id,
-      staffAffiliation.id,
+      pendingAffiliation.id,
       "suspend",
       facilityAdmin,
       "127.0.0.1",
@@ -296,7 +372,7 @@ describe("Facility verification and affiliations (integration)", () => {
 
     const platformSuspended = await service.updateStaffAffiliation(
       facility.id,
-      staffAffiliation.id,
+      pendingAffiliation.id,
       "suspend",
       platformAdmin,
       "127.0.0.1",
@@ -305,7 +381,7 @@ describe("Facility verification and affiliations (integration)", () => {
 
     const revoked = await service.updateStaffAffiliation(
       facility.id,
-      staffAffiliation.id,
+      pendingAffiliation.id,
       "revoke",
       platformAdmin,
       "127.0.0.1",
@@ -342,7 +418,7 @@ describe("Facility verification and affiliations (integration)", () => {
           inArray(auditEvents.resourceId, [
             facility.id,
             adminAffiliation.id,
-            staffAffiliation.id,
+            pendingAffiliation.id,
           ]),
           inArray(auditEvents.action, [
             "FACILITY_CREATED_PENDING",
@@ -371,7 +447,7 @@ describe("Facility verification and affiliations (integration)", () => {
         expect.objectContaining({
           actorId: facilityAdmin.id,
           action: "FACILITY_STAFF_AFFILIATION_CREATED_PENDING",
-          resourceId: staffAffiliation.id,
+          resourceId: pendingAffiliation.id,
         }),
       ]),
     );
@@ -380,6 +456,20 @@ describe("Facility verification and affiliations (integration)", () => {
         /^[0-9a-f-]{36}$/i.test(resourceId),
       ),
     ).toBe(true);
+    const auditEventsForInvitation = await db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.resourceId, pendingAffiliation.id));
+    expect(JSON.stringify(auditEventsForInvitation)).not.toContain(
+      invitationToken,
+    );
+    const emittedLogs = [
+      consoleSpies[0],
+      consoleSpies[1],
+      consoleSpies[2],
+      consoleSpies[3],
+    ].flatMap((spy) => spy.mock.calls.map((args) => JSON.stringify(args)));
+    expect(emittedLogs.join("\n")).not.toContain(invitationToken);
   });
 
   it("protects the last active facility administrator from non-platform suspension or revocation", async () => {

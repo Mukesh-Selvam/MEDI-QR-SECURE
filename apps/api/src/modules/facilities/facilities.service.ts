@@ -5,6 +5,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { createHash, randomBytes } from "node:crypto";
 import { and, count, eq } from "drizzle-orm";
@@ -18,6 +19,10 @@ import {
 import type { AuditAction, AuditEventInput } from "../audit/audit.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import type { AuthenticatedUser } from "../auth/decorators/current-user.decorator.js";
+import {
+  NOTIFICATION_EMAIL_PROVIDER,
+  type NotificationEmailProvider,
+} from "../notifications/notification-email.provider.js";
 import {
   affiliationUserSchema,
   acceptStaffInvitationSchema,
@@ -65,7 +70,11 @@ const facilityAdminAffiliationActions: Partial<Record<string, AuditAction>> = {
 
 @Injectable()
 export class FacilitiesService {
-  constructor(@Inject(AuditService) private readonly audit: FacilityAudit) {}
+  constructor(
+    @Inject(AuditService) private readonly audit: FacilityAudit,
+    @Inject(NOTIFICATION_EMAIL_PROVIDER)
+    private readonly emailProvider: NotificationEmailProvider,
+  ) {}
 
   async createFacility(
     input: unknown,
@@ -320,6 +329,11 @@ export class FacilitiesService {
         facilityId,
         target.id,
       );
+      if (!target.email || !this.emailProvider.enabled) {
+        throw new ServiceUnavailableException(
+          "Staff invitations cannot be delivered right now.",
+        );
+      }
 
       const [affiliation] = await transaction
         .insert(facilityStaffAffiliations)
@@ -355,17 +369,30 @@ export class FacilitiesService {
         transaction,
       );
       const invitationToken = randomBytes(32).toString("base64url");
-      await transaction.insert(facilityStaffInvitations).values({
-        facilityId,
-        affiliationId: affiliation.id,
-        invitedUserId: target.id,
-        tokenHash: createHash("sha256")
-          .update(invitationToken)
-          .digest("hex"),
-        expiresAt: new Date(Date.now() + STAFF_INVITATION_LIFETIME_MS),
-        createdByUserId: actor.id,
+      const invitationExpiresAt = new Date(
+        Date.now() + STAFF_INVITATION_LIFETIME_MS,
+      );
+      const [invitation] = await transaction
+        .insert(facilityStaffInvitations)
+        .values({
+          facilityId,
+          affiliationId: affiliation.id,
+          invitedUserId: target.id,
+          tokenHash: createHash("sha256").update(invitationToken).digest("hex"),
+          expiresAt: invitationExpiresAt,
+          createdByUserId: actor.id,
+        })
+        .returning({ id: facilityStaffInvitations.id });
+      if (!invitation) {
+        throw new Error("Staff invitation creation returned no row.");
+      }
+      await this.emailProvider.sendStaffInvitation({
+        recipient: target.email,
+        invitationId: invitation.id,
+        invitationToken,
+        expiresAt: invitationExpiresAt,
       });
-      return { ...affiliation, invitationToken };
+      return { invitationId: invitation.id, status: "pending" as const };
     });
   }
 
@@ -644,7 +671,12 @@ export class FacilitiesService {
     userId: string,
   ) {
     const [user] = await transaction
-      .select({ id: users.id, role: users.role, status: users.status })
+      .select({
+        id: users.id,
+        role: users.role,
+        status: users.status,
+        email: users.email,
+      })
       .from(users)
       .where(eq(users.id, userId))
       .limit(1);

@@ -89,6 +89,36 @@ describe("MailpitNotificationEmailProvider", () => {
     expect(sentEmail?.text).toContain(requestId);
   });
 
+  it("delivers the one-time invitation only to the invited address", async () => {
+    const provider = new MailpitNotificationEmailProvider(config);
+    const invitationToken =
+      "fake-invitation-token-that-is-not-a-patient-secret";
+    const expiresAt = new Date("2026-10-07T00:00:00.000Z");
+
+    await provider.sendStaffInvitation({
+      recipient: "fake-staff@mediqr.invalid",
+      invitationId: "00000000-0000-0000-0000-000000000001",
+      invitationToken,
+      expiresAt,
+    });
+
+    expect(mocks.sendMail).toHaveBeenCalledWith({
+      from: "notifications@mediqr.invalid",
+      to: "fake-staff@mediqr.invalid",
+      subject: "MediQR staff invitation",
+      text: [
+        "A facility has invited you to join its staff roster.",
+        "Sign in through the staff identity provider with MFA, then enter this one-time invitation code:",
+        invitationToken,
+        "Invitation reference: 00000000-0000-0000-0000-000000000001",
+        "Expires: 2026-10-07T00:00:00.000Z",
+      ].join("\n"),
+    });
+    const delivered = mocks.sendMail.mock.calls[0]?.[0] as
+      { text: string } | undefined;
+    expect(delivered?.text).not.toMatch(/https?:\/\/|www\.|href=/i);
+  });
+
   it("converts transport errors to a sanitized delivery error", async () => {
     mocks.sendMail.mockRejectedValue(new Error("sensitive transport detail"));
     const provider = new MailpitNotificationEmailProvider(config);

@@ -43,6 +43,7 @@ describe("Emergency access grants and summaries (integration)", () => {
       .fn()
       .mockRejectedValueOnce(new NotificationEmailDeliveryError())
       .mockResolvedValue(undefined),
+    sendStaffInvitation: vi.fn().mockResolvedValue(undefined),
   };
   let crypto: VaultCryptoService;
   let notificationsService: NotificationsService;
@@ -64,6 +65,7 @@ describe("Emergency access grants and summaries (integration)", () => {
   const documentPatientIds: string[] = [];
   const additionalPatientIds: string[] = [];
   const additionalUserIds: string[] = [];
+  let resolutionIpCounter = 1;
 
   const makeActor = (
     id: string,
@@ -80,10 +82,12 @@ describe("Emergency access grants and summaries (integration)", () => {
       audit.hashIp("127.0.0.1"),
     );
     const resolutionId = randomUUID();
+    const resolutionIp = `192.0.2.${resolutionIpCounter}`;
+    resolutionIpCounter += 1;
     await resolution.resolve(
       credential.credentialToken,
       resolutionId,
-      "127.0.0.1",
+      resolutionIp,
     );
     return resolutionId;
   }

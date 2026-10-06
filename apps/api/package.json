@@ -15,7 +15,7 @@
     "lint": "eslint \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:int": "vitest run --config vitest.int.config.ts",
+    "test:int": "pnpm db:migrate && vitest run --config vitest.int.config.ts",
     "clean": "rimraf dist"
   },
   "dependencies": {

@@ -2,7 +2,7 @@ import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { Client } from "pg";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Browser, type Page } from "@playwright/test";
 
 interface KeycloakTokenResponse {
   access_token: string;
@@ -32,6 +32,8 @@ interface MailpitMessage {
 
 const keycloakBaseUrl =
   process.env.KEYCLOAK_BASE_URL ?? "http://localhost:8080";
+const browserTestBaseUrl =
+  process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 const realm = process.env.KEYCLOAK_REALM ?? "mediqr";
 const adminUsername = process.env.KEYCLOAK_ADMIN_USER ?? "admin";
 const adminPassword = process.env.KEYCLOAK_ADMIN_PASSWORD;
@@ -47,14 +49,71 @@ const patientUserIds = new Set<string>();
 const patientDatabaseIds = new Set<string>();
 const emergencyVisibleDocumentIds = new Set<string>();
 
+async function configureFakeClinicianMfa(browser: Browser): Promise<void> {
+  const page = await browser.newPage();
+  try {
+    await page.goto(new URL("/login/clinician", browserTestBaseUrl).toString());
+    await page
+      .getByRole("link", { name: "Continue with secure sign-in" })
+      .click();
+    await page.locator("#username").fill(clinicianUsername);
+    await page.locator("#password").fill(clinicianPassword);
+    await page.locator("#kc-login").click();
+
+    const setupTotp = page.locator("#kc-totp-settings-form");
+    await setupTotp.waitFor({ state: "visible", timeout: 15_000 });
+    await page.locator("#mode-manual").click();
+    const secret = (await page.locator("#kc-totp-secret-key").innerText())
+      .replace(/\s+/g, "")
+      .toUpperCase();
+    clinicianTotpSecret = secret;
+    await page.locator("#userLabel").fill("MediQR E2E");
+    await page.locator("#totp").fill(generateTotp(secret));
+    await page.locator("#saveTOTPBtn").click();
+
+    await expect(page).toHaveURL(/\/login\/clinician\?auth=mfa-setup/);
+    const setupCookies = await page.context().cookies();
+    expect(
+      setupCookies.some(({ name }) => name === "__Host-mediqr-access"),
+    ).toBe(false);
+  } finally {
+    await page.close();
+  }
+}
+
+async function signInFakeClinician(page: Page): Promise<void> {
+  if (!clinicianTotpSecret) {
+    throw new Error("The shared fake clinician MFA fixture is unavailable.");
+  }
+  await page.goto("/login/clinician");
+  await page
+    .getByRole("link", { name: "Continue with secure sign-in" })
+    .click();
+  const usernameInput = page.locator("#username");
+  if (await usernameInput.count()) {
+    await usernameInput.fill(clinicianUsername);
+  }
+  await page.locator("#password").fill(clinicianPassword);
+  await page.locator("#kc-login").click();
+  await page.locator("#kc-otp-login-form").waitFor({
+    state: "visible",
+    timeout: 15_000,
+  });
+  await waitForNextTotpWindow();
+  await page.locator("#otp").fill(generateTotp(clinicianTotpSecret));
+  await page.locator("#kc-login").click();
+  await expect(page).toHaveURL(/\/login\/clinician\?auth=success/);
+}
+
 test.describe("browser authentication", () => {
-  test.beforeAll(async () => {
+  test.beforeAll(async ({ browser }) => {
     if (!adminPassword) {
       throw new Error("KEYCLOAK_ADMIN_PASSWORD is required for browser tests.");
     }
     adminToken = await getKeycloakAdminToken();
     clinicianKeycloakId = await createFakeClinician();
     clinicianDatabaseId = await seedUnverifiedClinician();
+    await configureFakeClinicianMfa(browser);
   });
 
   test.afterAll(async () => {
@@ -273,68 +332,7 @@ test.describe("browser authentication", () => {
   test("clinician signs in through Keycloak but unverified access is denied", async ({
     page,
   }) => {
-    await page.goto("/login/clinician");
-    await page
-      .getByRole("link", { name: "Continue with secure sign-in" })
-      .click();
-    await page.locator("#username").fill(clinicianUsername);
-    await page.locator("#password").fill(clinicianPassword);
-    await page.locator("#kc-login").click();
-
-    const setupTotp = page.locator("#kc-totp-settings-form");
-    try {
-      await setupTotp.waitFor({ state: "visible", timeout: 15_000 });
-    } catch {
-      const pageState = {
-        path: new URL(page.url()).pathname,
-        authResult: new URL(page.url()).searchParams.get("auth"),
-        setupForms: await setupTotp.count(),
-        passwordFields: await page.locator("#password").count(),
-        otpForms: await page.locator("#kc-otp-login-form").count(),
-        invalidCredentials:
-          (await page.getByText("Invalid username or password").count()) > 0,
-      };
-      throw new Error(
-        `Unexpected Keycloak MFA page: ${JSON.stringify(pageState)}`,
-      );
-    }
-    await page.locator("#mode-manual").click();
-    const secret = (await page.locator("#kc-totp-secret-key").innerText())
-      .replace(/\s+/g, "")
-      .toUpperCase();
-    clinicianTotpSecret = secret;
-    await page.locator("#userLabel").fill("MediQR E2E");
-    await page.locator("#totp").fill(generateTotp(secret));
-    await page.locator("#saveTOTPBtn").click();
-
-    await expect(page).toHaveURL(/\/login\/clinician\?auth=mfa-setup/);
-    const cookiesAfterMfaSetup = await page.context().cookies();
-    expect(
-      cookiesAfterMfaSetup.some(
-        ({ name }) => name === "__Host-mediqr-access",
-      ),
-    ).toBe(false);
-    await page.goto("/login/clinician");
-    await page
-      .getByRole("link", { name: "Continue with secure sign-in" })
-      .waitFor({ state: "visible" });
-    await page
-      .getByRole("link", { name: "Continue with secure sign-in" })
-      .click();
-    const usernameInput = page.locator("#username");
-    if (await usernameInput.count()) {
-      await usernameInput.fill(clinicianUsername);
-    }
-    await page.locator("#password").fill(clinicianPassword);
-    await page.locator("#kc-login").click();
-
-    const otpLogin = page.locator("#kc-otp-login-form");
-    await otpLogin.waitFor({ state: "visible", timeout: 15_000 });
-    await waitForNextTotpWindow();
-    await page.locator("#otp").fill(generateTotp(secret));
-    await page.locator("#kc-login").click();
-
-    await expect(page).toHaveURL(/\/login\/clinician\?auth=success/);
+    await signInFakeClinician(page);
     const sessionResponse = await page.request.get("/api/auth/session");
     const sessionBody: unknown = await sessionResponse.json();
     const sessionSummary =
@@ -370,9 +368,6 @@ test.describe("browser authentication", () => {
   test("clinician scans, patient approves, reads a document, and revokes access", async ({
     browser,
   }, testInfo) => {
-    if (!clinicianTotpSecret) {
-      throw new Error("The seeded fake clinician MFA setup did not complete.");
-    }
     const connection = await createDatabaseClient();
     let patientRecordId = "";
     try {
@@ -498,21 +493,7 @@ test.describe("browser authentication", () => {
 
     const clinicianContext = await browser.newContext();
     const clinicianPage = await clinicianContext.newPage();
-    await clinicianPage.goto("/login/clinician");
-    await clinicianPage
-      .getByRole("link", { name: "Continue with secure sign-in" })
-      .click();
-    await clinicianPage.locator("#username").fill(clinicianUsername);
-    await clinicianPage.locator("#password").fill(clinicianPassword);
-    await clinicianPage.locator("#kc-login").click();
-    await clinicianPage.locator("#kc-otp-login-form").waitFor({
-      state: "visible",
-      timeout: 15_000,
-    });
-    await waitForNextTotpWindow();
-    await clinicianPage.locator("#otp").fill(generateTotp(clinicianTotpSecret));
-    await clinicianPage.locator("#kc-login").click();
-    await expect(clinicianPage).toHaveURL(/\/login\/clinician\?auth=success/);
+    await signInFakeClinician(clinicianPage);
 
     await clinicianPage.goto(
       `/request-access/#credential=${encodeURIComponent(credential.credentialToken)}`,

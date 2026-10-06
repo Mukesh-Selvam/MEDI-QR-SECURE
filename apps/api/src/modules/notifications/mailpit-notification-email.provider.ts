@@ -4,6 +4,7 @@ import {
   NotificationEmailDeliveryError,
   type NotificationEmail,
   type NotificationEmailProvider,
+  type StaffInvitationEmail,
 } from "./notification-email.provider.js";
 
 export class MailpitNotificationEmailProvider implements NotificationEmailProvider {
@@ -55,12 +56,35 @@ export class MailpitNotificationEmailProvider implements NotificationEmailProvid
       throw new NotificationEmailDeliveryError();
     }
   }
+
+  async sendStaffInvitation(invitation: StaffInvitationEmail): Promise<void> {
+    try {
+      await this.transport.sendMail({
+        from: this.config.MAIL_FROM_ADDRESS,
+        to: invitation.recipient,
+        subject: "MediQR staff invitation",
+        text: [
+          "A facility has invited you to join its staff roster.",
+          "Sign in through the staff identity provider with MFA, then enter this one-time invitation code:",
+          invitation.invitationToken,
+          `Invitation reference: ${invitation.invitationId}`,
+          `Expires: ${invitation.expiresAt.toISOString()}`,
+        ].join("\n"),
+      });
+    } catch {
+      throw new NotificationEmailDeliveryError();
+    }
+  }
 }
 
 export class NoopNotificationEmailProvider implements NotificationEmailProvider {
   readonly enabled = false;
 
   async send(_notification: NotificationEmail): Promise<void> {
+    return Promise.resolve();
+  }
+
+  async sendStaffInvitation(_invitation: StaffInvitationEmail): Promise<void> {
     return Promise.resolve();
   }
 }
